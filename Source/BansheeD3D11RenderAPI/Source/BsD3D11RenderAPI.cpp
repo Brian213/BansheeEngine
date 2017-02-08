@@ -67,7 +67,9 @@ namespace bs { namespace ct
 			BS_EXCEPT(RenderingAPIException, "Failed to create Direct3D11 DXGIFactory");
 
 		mDriverList = bs_new<D3D11DriverList>(mDXGIFactory);
-		mActiveD3DDriver = mDriverList->item(0); // TODO: Always get first driver, for now
+		//mActiveD3DDriver = mDriverList->item(0); // TODO: Always get first driver, for now
+		// FIXED ERROR: Not sure why changing to second driver fixed error:"Cannot create D3D11 compute shader from microcode"
+		mActiveD3DDriver = mDriverList->item(1); // TODO: Use second driver for now
 		mVideoModeInfo = mActiveD3DDriver->getVideoModeInfo();
 
 		IDXGIAdapter* selectedAdapter = mActiveD3DDriver->getDeviceAdapter();
