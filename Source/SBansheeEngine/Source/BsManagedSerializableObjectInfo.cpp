@@ -8,25 +8,7 @@
 #include "BsMonoManager.h"
 #include "BsMonoField.h"
 #include "BsMonoProperty.h"
-#include "BsScriptTexture2D.h"
-#include "BsScriptSpriteTexture.h"
 #include "BsScriptAssemblyManager.h"
-#include "BsScriptTexture3D.h"
-#include "BsScriptTextureCube.h"
-#include "BsScriptMaterial.h"
-#include "BsScriptMesh.h"
-#include "BsScriptFont.h"
-#include "BsScriptShader.h"
-#include "BsScriptShaderInclude.h"
-#include "BsScriptPlainText.h"
-#include "BsScriptScriptCode.h"
-#include "BsScriptStringTable.h"
-#include "BsScriptGUISkin.h"
-#include "BsScriptPhysicsMaterial.h"
-#include "BsScriptPhysicsMesh.h"
-#include "BsScriptAudioClip.h"
-#include "BsScriptAnimationClip.h"
-#include "BsScriptPrefab.h"
 #include "BsScriptManagedResource.h"
 #include <BsScriptStep.h>
 
@@ -123,7 +105,7 @@ namespace bs
 			if (range != nullptr)
 			{
 				float min = 0;
-				ScriptRange::getMinRangeField()->getValue(mMonoField->getAttribute(range), &min);
+				ScriptRange::getMinRangeField()->get(mMonoField->getAttribute(range), &min);
 				return min;
 			}
 		}
@@ -138,7 +120,7 @@ namespace bs
 			if (range != nullptr)
 			{
 				float max = 0;
-				ScriptRange::getMaxRangeField()->getValue(mMonoField->getAttribute(range), &max);
+				ScriptRange::getMaxRangeField()->get(mMonoField->getAttribute(range), &max);
 				return max;
 			}
 		}
@@ -153,7 +135,7 @@ namespace bs
 			if (range != nullptr)
 			{
 				bool slider = false;
-				ScriptRange::getSliderField()->getValue(mMonoField->getAttribute(range), &slider);
+				ScriptRange::getSliderField()->get(mMonoField->getAttribute(range), &slider);
 				return slider;
 			}
 		}
@@ -169,7 +151,7 @@ namespace bs
 			if (step != nullptr)
 			{
 				float value = 0;
-				ScriptStep::getStepField()->getValue(mMonoField->getAttribute(step), &value);
+				ScriptStep::getStepField()->get(mMonoField->getAttribute(step), &value);
 				return value;
 			}
 		}
@@ -178,12 +160,12 @@ namespace bs
 
 	MonoObject* ManagedSerializableFieldInfo::getValue(MonoObject* instance) const
 	{
-		return mMonoField->getValueBoxed(instance);
+		return mMonoField->getBoxed(instance);
 	}
 
 	void ManagedSerializableFieldInfo::setValue(MonoObject* instance, void* value) const
 	{
-		mMonoField->setValue(instance, value);
+		mMonoField->set(instance, value);
 	}
 
 	RTTITypeBase* ManagedSerializableFieldInfo::getRTTIStatic()
@@ -210,7 +192,7 @@ namespace bs
 			if (range != nullptr)
 			{
 				float min = 0;
-				ScriptRange::getMinRangeField()->getValue(mMonoProperty->getAttribute(range), &min);
+				ScriptRange::getMinRangeField()->get(mMonoProperty->getAttribute(range), &min);
 				return min;
 			}
 		}
@@ -226,7 +208,7 @@ namespace bs
 			if (range != nullptr)
 			{
 				float max = 0;
-				ScriptRange::getMaxRangeField()->getValue(mMonoProperty->getAttribute(range), &max);
+				ScriptRange::getMaxRangeField()->get(mMonoProperty->getAttribute(range), &max);
 				return max;
 			}
 		}
@@ -242,7 +224,7 @@ namespace bs
 			if (range != nullptr)
 			{
 				bool slider = false;
-				ScriptRange::getSliderField()->getValue(mMonoProperty->getAttribute(range), &slider);
+				ScriptRange::getSliderField()->get(mMonoProperty->getAttribute(range), &slider);
 				return slider;
 			}
 		}
@@ -259,7 +241,7 @@ namespace bs
 			if (step != nullptr)
 			{
 				float value = 0;
-				ScriptStep::getStepField()->getValue(mMonoProperty->getAttribute(step), &value);
+				ScriptStep::getStepField()->get(mMonoProperty->getAttribute(step), &value);
 				return value;
 			}
 		}
@@ -373,27 +355,13 @@ namespace bs
 	{
 		switch (mType)
 		{
-		case ScriptReferenceType::Resource:
-		case ScriptReferenceType::Texture2D:
-		case ScriptReferenceType::Texture3D:
-		case ScriptReferenceType::TextureCube:
-		case ScriptReferenceType::SpriteTexture:
-		case ScriptReferenceType::Shader:
-		case ScriptReferenceType::ShaderInclude:
-		case ScriptReferenceType::Material:
-		case ScriptReferenceType::Mesh:
-		case ScriptReferenceType::PlainText:
-		case ScriptReferenceType::ScriptCode:
-		case ScriptReferenceType::Prefab:
-		case ScriptReferenceType::Font:
-		case ScriptReferenceType::StringTable:
-		case ScriptReferenceType::GUISkin:
-		case ScriptReferenceType::PhysicsMaterial:
-		case ScriptReferenceType::PhysicsMesh:
-		case ScriptReferenceType::AudioClip:
-		case ScriptReferenceType::AnimationClip:
+		case ScriptReferenceType::BuiltinResourceBase:
+		case ScriptReferenceType::ManagedResourceBase:
+		case ScriptReferenceType::BuiltinResource:
+		case ScriptReferenceType::BuiltinComponentBase:
+		case ScriptReferenceType::ManagedComponentBase:
+		case ScriptReferenceType::BuiltinComponent:
 		case ScriptReferenceType::SceneObject:
-		case ScriptReferenceType::Component:
 			return true;
 		default:
 			break;
@@ -406,53 +374,21 @@ namespace bs
 	{
 		switch (mType)
 		{
-		case ScriptReferenceType::Resource:
+		case ScriptReferenceType::BuiltinResourceBase:
 			return ScriptResource::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::Texture2D:
-			return ScriptTexture2D::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::Texture3D:
-			return ScriptTexture3D::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::TextureCube:
-			return ScriptTextureCube::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::SpriteTexture:
-			return ScriptSpriteTexture::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::Shader:
-			return ScriptShader::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::ShaderInclude:
-			return ScriptShaderInclude::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::Material:
-			return ScriptMaterial::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::Mesh:
-			return ScriptMesh::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::PlainText:
-			return ScriptPlainText::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::ScriptCode:
-			return ScriptScriptCode::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::Prefab:
-			return ScriptPrefab::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::Font:
-			return ScriptFont::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::StringTable:
-			return ScriptStringTable::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::GUISkin:
-			return ScriptGUISkin::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::PhysicsMaterial:
-			return ScriptPhysicsMaterial::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::PhysicsMesh:
-			return ScriptPhysicsMesh::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::AudioClip:
-			return ScriptAudioClip::getMetaData()->scriptClass->_getInternalClass();
-		case ScriptReferenceType::AnimationClip:
-			return ScriptAnimationClip::getMetaData()->scriptClass->_getInternalClass();
+		case ScriptReferenceType::ManagedResourceBase:
+			return ScriptManagedResource::getMetaData()->scriptClass->_getInternalClass();
 		case ScriptReferenceType::SceneObject:
 			return ScriptAssemblyManager::instance().getSceneObjectClass()->_getInternalClass();
-		case ScriptReferenceType::Component:
+		case ScriptReferenceType::BuiltinComponentBase:
 			return ScriptAssemblyManager::instance().getComponentClass()->_getInternalClass();
+		case ScriptReferenceType::ManagedComponentBase:
+			return ScriptAssemblyManager::instance().getManagedComponentClass()->_getInternalClass();
 		default:
 			break;
 		}
 
-		// Custom component or resource
+		// Specific component or resource (either builtin or custom)
 		SPtr<ManagedSerializableObjectInfo> objInfo;
 		if (!ScriptAssemblyManager::instance().getSerializableObjectInfo(mTypeNamespace, mTypeName, objInfo))
 			return nullptr;

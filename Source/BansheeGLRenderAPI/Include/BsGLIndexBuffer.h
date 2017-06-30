@@ -13,7 +13,7 @@ namespace bs { namespace ct
 	 */
 
 	/**	OpenGL implementation of an index buffer. */
-    class BS_RSGL_EXPORT GLIndexBuffer : public IndexBuffer
+    class GLIndexBuffer : public IndexBuffer
     {
     public:
 		GLIndexBuffer(const INDEX_BUFFER_DESC& desc, GpuDeviceFlags deviceMask);
@@ -25,6 +25,10 @@ namespace bs { namespace ct
 		/** @copydoc IndexBuffer::writeData */
         void writeData(UINT32 offset, UINT32 length, const void* source, 
 			BufferWriteType writeFlags = BWT_NORMAL, UINT32 queueIdx = 0) override;
+
+		/** @copydoc IndexBuffer::copyData */
+		void copyData(HardwareBuffer& srcBuffer, UINT32 srcOffset, UINT32 dstOffset, UINT32 length, 
+			bool discardWholeBuffer = false, const SPtr<ct::CommandBuffer>& commandBuffer = nullptr) override;
 
 		/**	Returns internal OpenGL index buffer handle. */
         GLuint getGLBufferId() const { return mBuffer.getGLBufferId(); }

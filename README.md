@@ -1,3 +1,5 @@
+[![Join the chat at https://gitter.im/Banshee3D/Lobby](https://badges.gitter.im/Banshee3D/Lobby.svg)](https://gitter.im/Banshee3D/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 # What is Banshee? 
 A high quality modern game development toolkit. It provides a **high performance multi-threaded game engine** written in C++14 that runs 2D and 3D games. The engine offers a wide variety of high level systems needed for game development, ranging from math and utility libraries, to Vulkan, DirectX 11 and OpenGL support all the way to input, GUI, physics, audio, animation, scripting and support for many popular resource formats (e.g. FBX, PNG, PSD, TTF, OGG, WAV).
 
@@ -17,7 +19,7 @@ Aside from being a fully featured game engine and toolkit, Banshee can also be u
 
 # Documentation
 * [Managed](http://docs.banshee3d.com/Managed/index.html) - Documentation for the scripting (C#) API. This is what most users will be interested in.
-* [Native] (http://docs.banshee3d.com/Native/index.html) - Documentation for the native (C++) API. This is meant for advanced users meaning to extend/modify the engine.
+* [Native](http://docs.banshee3d.com/Native/index.html) - Documentation for the native (C++) API. This is meant for advanced users meaning to extend/modify the engine.
 
 # About
 * [License](https://github.com/BearishSun/BansheeEngine/blob/master/Documentation/GitHub/license.md) - Information about Banshee's license.
@@ -27,5 +29,4 @@ Aside from being a fully featured game engine and toolkit, Banshee can also be u
 **Banshee Editor**
 ![Banshee Editor](http://bearishsun.thalassa.feralhosting.com/BansheeEditor.png "Banshee Editor")
 
-**Video overview**
-[Link] (https://youtu.be/WJsYOyCXGEU)
+[**Video overview**](https://youtu.be/WJsYOyCXGEU)

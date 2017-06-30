@@ -15,7 +15,7 @@
 #include "BsGpuParams.h"
 #include "BsGpuParamsSet.h"
 #include "BsRenderAPI.h"
-#include "BsCoreRenderer.h"
+#include "BsRenderer.h"
 #include "BsRendererUtility.h"
 #include "BsTransientMesh.h"
 #include "BsRendererManager.h"
@@ -174,6 +174,24 @@ namespace bs
 		mIdxToSceneObjectMap[coneData.idx] = mActiveSO;
 	}
 
+	void GizmoManager::drawDisc(const Vector3& position, const Vector3& normal, float radius)
+	{
+		mSolidDiscData.push_back(DiscData());
+		DiscData& discData = mSolidDiscData.back();
+
+		discData.idx = mCurrentIdx++;
+		discData.position = position;
+		discData.normal = normal;
+		discData.radius = radius;
+		discData.color = mColor;
+		discData.transform = mTransform;
+		discData.sceneObject = mActiveSO;
+		discData.pickable = mPickable;
+
+		mDrawHelper->disc(position, normal, radius);
+		mIdxToSceneObjectMap[discData.idx] = mActiveSO;
+	}
+
 	void GizmoManager::drawWireCube(const Vector3& position, const Vector3& extents)
 	{
 		mWireCubeData.push_back(CubeData());
@@ -297,8 +315,8 @@ namespace bs
 
 	void GizmoManager::drawWireDisc(const Vector3& position, const Vector3& normal, float radius)
 	{
-		mWireDiscData.push_back(WireDiscData());
-		WireDiscData& wireDiscData = mWireDiscData.back();
+		mWireDiscData.push_back(DiscData());
+		DiscData& wireDiscData = mWireDiscData.back();
 
 		wireDiscData.idx = mCurrentIdx++;
 		wireDiscData.position = position;
@@ -556,15 +574,26 @@ namespace bs
 			mPickingDrawHelper->lineList(lineListDataEntry.linePoints);
 		}
 
-		for (auto& wireDiscDataEntry : mWireDiscData)
+		for (auto& discDataEntry : mSolidDiscData)
 		{
-			if (!wireDiscDataEntry.pickable)
+			if (!discDataEntry.pickable)
 				continue;
 
-			mPickingDrawHelper->setColor(idxToColorCallback(wireDiscDataEntry.idx));
-			mPickingDrawHelper->setTransform(wireDiscDataEntry.transform);
+			mPickingDrawHelper->setColor(idxToColorCallback(discDataEntry.idx));
+			mPickingDrawHelper->setTransform(discDataEntry.transform);
 
-			mPickingDrawHelper->wireDisc(wireDiscDataEntry.position, wireDiscDataEntry.normal, wireDiscDataEntry.radius);
+			mPickingDrawHelper->disc(discDataEntry.position, discDataEntry.normal, discDataEntry.radius);
+		}
+
+		for (auto& discDataEntry : mWireDiscData)
+		{
+			if (!discDataEntry.pickable)
+				continue;
+
+			mPickingDrawHelper->setColor(idxToColorCallback(discDataEntry.idx));
+			mPickingDrawHelper->setTransform(discDataEntry.transform);
+
+			mPickingDrawHelper->wireDisc(discDataEntry.position, discDataEntry.normal, discDataEntry.radius);
 		}
 
 		for (auto& wireArcDataEntry : mWireArcData)
@@ -653,6 +682,7 @@ namespace bs
 		mWireConeData.clear();
 		mLineData.clear();
 		mLineListData.clear();
+		mSolidDiscData.clear();
 		mWireDiscData.clear();
 		mWireArcData.clear();
 		mWireMeshData.clear();
@@ -905,7 +935,7 @@ namespace bs
 
 	namespace ct
 	{
-	GizmoParamBlockDef gHandleParamBlockDef;
+	GizmoParamBlockDef gGizmoParamBlockDef;
 	GizmoPickingParamBlockDef gGizmoPickingParamBlockDef;
 
 	const float GizmoRenderer::PICKING_ALPHA_CUTOFF = 0.5f;
@@ -929,8 +959,8 @@ namespace bs
 		mPickingMaterials[0] = initData.pickingMat;
 		mPickingMaterials[1] = initData.alphaPickingMat;
 
-		mMeshGizmoBuffer = gHandleParamBlockDef.createBuffer();
-		mIconGizmoBuffer = gHandleParamBlockDef.createBuffer();
+		mMeshGizmoBuffer = gGizmoParamBlockDef.createBuffer();
+		mIconGizmoBuffer = gGizmoParamBlockDef.createBuffer();
 		mMeshPickingParamBuffer = gGizmoPickingParamBlockDef.createBuffer();
 		mIconPickingParamBuffer = gGizmoPickingParamBlockDef.createBuffer();
 	}
@@ -1027,8 +1057,8 @@ namespace bs
 
 		if (!usePickingMaterial)
 		{
-			gHandleParamBlockDef.gMatViewProj.set(mMeshGizmoBuffer, viewProjMat);
-			gHandleParamBlockDef.gViewDir.set(mMeshGizmoBuffer, (Vector4)camera->getForward());
+			gGizmoParamBlockDef.gMatViewProj.set(mMeshGizmoBuffer, viewProjMat);
+			gGizmoParamBlockDef.gViewDir.set(mMeshGizmoBuffer, (Vector4)camera->getForward());
 
 			for (auto& entry : meshes)
 			{
@@ -1133,8 +1163,8 @@ namespace bs
 
 		if (!usePickingMaterial)
 		{
-			gHandleParamBlockDef.gMatViewProj.set(mIconGizmoBuffer, projMat);
-			gHandleParamBlockDef.gViewDir.set(mIconGizmoBuffer, Vector4::ZERO);
+			gGizmoParamBlockDef.gMatViewProj.set(mIconGizmoBuffer, projMat);
+			gGizmoParamBlockDef.gViewDir.set(mIconGizmoBuffer, Vector4::ZERO);
 
 			for (UINT32 passIdx = 0; passIdx < 2; passIdx++)
 			{

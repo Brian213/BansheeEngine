@@ -7,6 +7,7 @@
 #include "BsShaderImportOptions.h"
 #include "BsTextureImportOptions.h"
 #include "BsRendererMaterialManager.h"
+#include "BsRendererMaterial.h"
 #include "BsFontImportOptions.h"
 #include "BsSpriteTexture.h"
 #include "BsTexture.h"
@@ -16,21 +17,26 @@
 #include "BsFileSystem.h"
 #include "BsCoreThread.h"
 #include "BsUUID.h"
+#include "BsShader.h"
+#include "BsPass.h"
+#include "BsGpuProgram.h"
 
 using json = nlohmann::json;
 
 namespace bs
 {
-	void BuiltinResourcesHelper::importAssets(const nlohmann::json& entries, const Path& inputFolder, 
-		const Path& outputFolder, const SPtr<ResourceManifest>& manifest, AssetType mode)
+	bool BuiltinResourcesHelper::importAssets(const nlohmann::json& entries, const Path& inputFolder, 
+		const Path& outputFolder, const SPtr<ResourceManifest>& manifest, AssetType mode, bool forceImport)
 	{
 		if (!FileSystem::exists(inputFolder))
-			return;
+			return true;
 
-		if (FileSystem::exists(outputFolder))
+		bool outputExists = FileSystem::exists(outputFolder);
+		if (forceImport && outputExists)
 			FileSystem::remove(outputFolder);
 		
-		FileSystem::createDir(outputFolder);
+		if(!outputExists || forceImport)
+			FileSystem::createDir(outputFolder);
 
 		Path spriteOutputFolder = outputFolder + "/Sprites/";
 		if(mode == AssetType::Sprite)
@@ -95,32 +101,53 @@ namespace bs
 					resourcesToSave.push_back(std::make_pair(relativeAssetPath, nullptr));
 			}
 
-			// Use the provided UUID if just one resource, otherwise we ignore the UUID. The current assumption is that
-			// such resources don't require persistent UUIDs. If that changes then this method needs to be updated.
-			if(resourcesToSave.size() == 1)
+			// Check if this resource actually changed
+			bool import = true;
+			if(!forceImport)
 			{
-				Path outputPath = outputFolder + resourcesToSave[0].first;
+				import = false;
 
-				HResource resource = Importer::instance().import(filePath, resourcesToSave[0].second, UUID);
-				if (resource != nullptr)
+				time_t lastModifiedSrc = FileSystem::getLastModifiedTime(filePath);
+				for(auto& entry : resourcesToSave)
 				{
-					Resources::instance().save(resource, outputPath, true);
-					manifest->registerResource(resource.getUUID(), outputPath);
+					Path outputPath = outputFolder + entry.first;
+					if(lastModifiedSrc > FileSystem::getLastModifiedTime(outputPath))
+					{
+						import = true;
+						break;
+					}
 				}
-
-				return resource;
 			}
-			else
-			{
-				for (auto& entry : resourcesToSave)
-				{
-					Path outputPath = outputFolder + entry.first;;
 
-					HResource resource = Importer::instance().import(filePath, entry.second);
+			if (import)
+			{
+				// Use the provided UUID if just one resource, otherwise we ignore the UUID. The current assumption is that
+				// such resources don't require persistent UUIDs. If that changes then this method needs to be updated.
+				if (resourcesToSave.size() == 1)
+				{
+					Path outputPath = outputFolder + resourcesToSave[0].first;
+
+					HResource resource = Importer::instance().import(filePath, resourcesToSave[0].second, UUID);
 					if (resource != nullptr)
 					{
 						Resources::instance().save(resource, outputPath, true);
 						manifest->registerResource(resource.getUUID(), outputPath);
+					}
+
+					return resource;
+				}
+				else
+				{
+					for (auto& entry : resourcesToSave)
+					{
+						Path outputPath = outputFolder + entry.first;;
+
+						HResource resource = Importer::instance().import(filePath, entry.second);
+						if (resource != nullptr)
+						{
+							Resources::instance().save(resource, outputPath, true);
+							manifest->registerResource(resource.getUUID(), outputPath);
+						}
 					}
 				}
 			}
@@ -173,6 +200,13 @@ namespace bs
 			HResource outputRes = importResource(name.c_str(), uuid.c_str());
 			if (outputRes == nullptr)
 				continue;
+
+			if (rtti_is_of_type<Shader>(outputRes.get()))
+			{
+				HShader shader = static_resource_cast<Shader>(outputRes);
+				if (!verifyAndReportShader(shader))
+					return false;
+			}
 
 			if (mode == AssetType::Sprite)
 			{
@@ -258,6 +292,8 @@ namespace bs
 				generateSprite(tex16, iconsToGenerate[i].name + "16", iconsToGenerate[i].SpriteUUIDs[2].c_str());
 			}
 		}
+
+		return true;
 	}
 
 	void BuiltinResourcesHelper::importFont(const Path& inputFile, const WString& outputName, const Path& outputFolder,
@@ -383,10 +419,10 @@ namespace bs
 		fileStream->close();
 	}
 
-	bool BuiltinResourcesHelper::checkForModifications(const Path& folder, const Path& timeStampFile)
+	UINT32 BuiltinResourcesHelper::checkForModifications(const Path& folder, const Path& timeStampFile)
 	{
 		if (!FileSystem::exists(timeStampFile))
-			return true;
+			return 2;
 
 		SPtr<DataStream> fileStream = FileSystem::openFile(timeStampFile);
 		time_t lastUpdateTime = 0;
@@ -408,7 +444,62 @@ namespace bs
 		};
 
 		FileSystem::iterate(folder, checkUpToDate, checkUpToDate);
+		
+		if (!upToDate)
+			return 1;
 
-		return !upToDate;
+		return 0;
+	}
+
+	bool BuiltinResourcesHelper::verifyAndReportShader(const HShader& shader)
+	{
+		if(!shader.isLoaded(false) || shader->getNumTechniques() == 0)
+		{
+#if BS_DEBUG_MODE
+			BS_EXCEPT(InvalidStateException, "Error occured while compiling a shader. Check earlier log messages for exact error.");
+#else
+			LOGERR("Error occured while compiling a shader. Check earlier log messages for exact error.")
+#endif
+			return false;
+		}
+
+		Vector<SPtr<Technique>> techniques = shader->getCompatibleTechniques();
+		for(auto& technique : techniques)
+		{
+			UINT32 numPasses = technique->getNumPasses();
+			for(UINT32 i = 0; i < numPasses; i++)
+			{
+				SPtr<Pass> pass = technique->getPass(i);
+
+				std::array<SPtr<GpuProgram>, 6> gpuPrograms;
+				gpuPrograms[0] = pass->getVertexProgram();
+				gpuPrograms[1] = pass->getFragmentProgram();
+				gpuPrograms[2] = pass->getGeometryProgram();
+				gpuPrograms[3] = pass->getHullProgram();
+				gpuPrograms[4] = pass->getDomainProgram();
+				gpuPrograms[5] = pass->getComputeProgram();
+
+				for(auto& program : gpuPrograms)
+				{
+					if (program == nullptr)
+						continue;
+
+					program->blockUntilCoreInitialized();
+					if(!program->isCompiled())
+					{
+#if BS_DEBUG_MODE
+						BS_EXCEPT(InvalidStateException, "Error occured while compiling a shader. Error message: " + 
+							program->getCompileErrorMessage());
+#else
+						LOGERR("Error occured while compiling a shader. Error message: " +
+							program->getCompileErrorMessage())
+#endif
+						return false;
+					}
+				}
+			}
+		}
+
+		return true;
 	}
 }

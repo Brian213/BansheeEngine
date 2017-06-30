@@ -15,17 +15,24 @@ namespace bs
 	 */
 
 	/**	Flags that describe how is a texture used. */
-    enum TextureUsage
+    enum BS_SCRIPT_EXPORT() TextureUsage
     {
-		TU_STATIC = GBU_STATIC, /**< A regular texture that is not often or ever updated from the CPU. */
-		TU_DYNAMIC = GBU_DYNAMIC, /**< A regular texture that is often updated by the CPU. */
-		TU_RENDERTARGET = 0x200, /**< Texture that can be rendered to by the GPU. */
-		TU_DEPTHSTENCIL = 0x400, /**< Texture used as a depth/stencil buffer by the GPU. */
-		TU_LOADSTORE = 0x800, /**< Texture that allows load/store operations from the GPU program. */
+		/** A regular texture that is not often or ever updated from the CPU. */
+		TU_STATIC			BS_SCRIPT_EXPORT(n:Default)			= GBU_STATIC, 
+		/** A regular texture that is often updated by the CPU. */
+		TU_DYNAMIC			BS_SCRIPT_EXPORT(n:Dynamic)			= GBU_DYNAMIC,
+		/** Texture that can be rendered to by the GPU. */
+		TU_RENDERTARGET		BS_SCRIPT_EXPORT(n:Render)			= 0x200,
+		/** Texture used as a depth/stencil buffer by the GPU. */
+		TU_DEPTHSTENCIL		BS_SCRIPT_EXPORT(n:DepthStencil)	= 0x400,
+		/** Texture that allows load/store operations from the GPU program. */
+		TU_LOADSTORE		BS_SCRIPT_EXPORT(n:LoadStore)		= 0x800,
 		/** All mesh data will also be cached in CPU memory, making it available for fast read access from the CPU. */
-		TU_CPUCACHED = 0x1000, 
-		TU_CPUREADABLE = 0x2000, /**< Allows the CPU to directly read the texture data buffers from the GPU. */
-		TU_DEFAULT = TU_STATIC
+		TU_CPUCACHED		BS_SCRIPT_EXPORT(n:CPUCached)		= 0x1000,
+		/** Allows the CPU to directly read the texture data buffers from the GPU. */
+		TU_CPUREADABLE		BS_SCRIPT_EXPORT(n:CPUReadable)		= 0x2000,
+		/** Default (most common) texture usage. */
+		TU_DEFAULT			BS_SCRIPT_EXPORT(ex:true)			= TU_STATIC
     };
 
 	/**	Texture mipmap options. */
@@ -87,10 +94,14 @@ namespace bs
          */
         UINT32 getNumMipmaps() const {return mDesc.numMips;}
 
-		/** Gets whether this texture will be set up so that on sampling it, hardware gamma correction is applied. */
+		/** 
+		 * Determines does the texture contain gamma corrected data. If true then the GPU will automatically convert the 
+		 * pixels to linear space before reading from the texture, and convert them to gamma space when writing to the
+		 * texture. 
+		 */
 		bool isHardwareGammaEnabled() const { return mDesc.hwGamma; }
 
-		/**	Gets the number of samples used for multisampling (0 if multisampling is not used). */
+		/**	Gets the number of samples used for multisampling (0 or 1 if multisampling is not used). */
 		UINT32 getNumSamples() const { return mDesc.numSamples; }
 
         /**	Returns the height of the texture.  */
@@ -102,7 +113,7 @@ namespace bs
         /**	Returns the depth of the texture (only applicable for 3D textures). */
         UINT32 getDepth() const { return mDesc.depth; }
 
-        /**	Returns texture usage (TextureUsage) of this texture. */
+        /**	Returns a value that signals the engine in what way is the texture expected to be used. */
         int getUsage() const { return mDesc.usage; }
 
 		/**	Returns the pixel format for the texture surface. */
@@ -153,7 +164,7 @@ namespace bs
 	 *
 	 * @note	Sim thread.
 	 */
-    class BS_CORE_EXPORT Texture : public Resource
+    class BS_CORE_EXPORT BS_SCRIPT_EXPORT() Texture : public Resource
     {
     public:
 		/**
@@ -352,10 +363,11 @@ namespace bs
 		 * @param[in]	srcMipLevel			Mip level to copy from.
 		 * @param[in]	dstFace				Face to copy to.
 		 * @param[in]	dstMipLevel			Mip level to copy to.
-		 * @param[in]	queueIdx			Device queue to perform the copy operation on. See @ref queuesDoc.
+		 * @param[in]	commandBuffer		Command buffer to queue the copy operation on. If null, main command buffer is
+		 *									used.
 		 */
 		void copy(const SPtr<Texture>& target, UINT32 srcFace = 0, UINT32 srcMipLevel = 0, UINT32 dstFace = 0,
-			UINT32 dstMipLevel = 0, UINT32 queueIdx = 0);
+			UINT32 dstMipLevel = 0, const SPtr<CommandBuffer>& commandBuffer = nullptr);
 
 		/**
 		 * Reads data from the texture buffer into the provided buffer.
@@ -434,7 +446,7 @@ namespace bs
 
 		/** @copydoc copy */
 		virtual void copyImpl(UINT32 srcFace, UINT32 srcMipLevel, UINT32 dstFace, UINT32 dstMipLevel, 
-			const SPtr<Texture>& target, UINT32 queueIdx = 0) = 0;
+			const SPtr<Texture>& target, const SPtr<CommandBuffer>& commandBuffer) = 0;
 
 		/** @copydoc readData */
 		virtual void readDataImpl(PixelData& dest, UINT32 mipLevel = 0, UINT32 face = 0, UINT32 deviceIdx = 0,

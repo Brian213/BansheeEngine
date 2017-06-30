@@ -1,88 +1,100 @@
-Parameters =
+mixin PerCameraData
 {
-	float3 		gViewDir : auto("ViewDir");
-	float3 		gViewOrigin : auto("ViewOrigin");
-	mat4x4		gMatViewProj : auto("VP");	
-	mat4x4		gMatView : auto("V");
-	mat4x4		gMatProj : auto("P");
-	mat4x4		gMatInvProj : auto("IP");
-	mat4x4		gMatInvViewProj : auto("IVP");
-	
-	// Special inverse view-projection matrix that had projection entries that affect z and w eliminated.
-	// Used to transform a vector(clip_x, clip_y, view_z, view_w), where clip_x/clip_y are in clip space, 
-	// and view_z/view_w in view space, into world space
-	mat4x4      gMatScreenToWorld : auto("ScreenToWorld");
-	
-	// Converts device Z to world Z using this formula: worldZ = (1 / (deviceZ + y)) * x
-	float2		gDeviceZToWorldZ : auto("DeviceToWorldZ");
-	
-	// x - near plane distance, y - far plane distance
-	float2		gNearFar : auto("NearFar");
-	
-	// xy - Viewport offset in pixels
-	// zw - Viewport width & height in pixels
-	int4 		gViewportRectangle : auto("ViewportRect");
-	
-	// xy - (Viewport size in pixels / 2) / Target size in pixels
-	// zw - (Viewport offset in pixels + (Viewport size in pixels / 2) + Optional pixel center offset) / Target size in pixels	
-	float4 		gClipToUVScaleOffset : auto("ClipToUVScaleOffset");		
-};
-
-Blocks =
-{
-	Block PerCamera : auto("PerCamera");
-};
-
-Technique : base("PerCameraData") =
-{
-	Language = "HLSL11";
-
-	Pass =
+	code
 	{
-		Common = 
+		cbuffer PerCamera
 		{
-			cbuffer PerCamera
-			{
-				float3	 gViewDir;
-				float3 	 gViewOrigin;
-				float4x4 gMatViewProj;
-				float4x4 gMatView;
-				float4x4 gMatProj;
-				float4x4 gMatInvProj;
-				float4x4 gMatInvViewProj;
-				float4x4 gMatScreenToWorld;
-				float2 	 gDeviceZToWorldZ;
-				float2	 gNearFar;
-				int4 	 gViewportRectangle;
-				float4 	 gClipToUVScaleOffset;				
-			}
-		};
-	};
-};
-
-Technique : base("PerCameraData") =
-{
-	Language = "GLSL";
-
-	Pass =
-	{
-		Common = 
+			float3	 gViewDir;
+			float3 	 gViewOrigin;
+			float4x4 gMatViewProj;
+			float4x4 gMatView;
+			float4x4 gMatProj;
+			float4x4 gMatInvProj;
+			float4x4 gMatInvViewProj;
+			
+			// Special inverse view-projection matrix that had projection entries that affect z and w eliminated.
+			// Used to transform a vector(clip_x, clip_y, view_z, view_w), where clip_x/clip_y are in clip space, 
+			// and view_z/view_w in view space, into world space				
+			float4x4 gMatScreenToWorld;
+			
+			// Converts device Z to world Z using this formula: worldZ = (1 / (deviceZ + y)) * x
+			float2 	 gDeviceZToWorldZ;
+			float2	 gNDCZToWorldZ;
+			float2 	 gNDCZToDeviceZ;
+			
+			// x - near plane distance, y - far plane distance
+			float2	 gNearFar;
+			
+			// xy - Viewport offset in pixels
+			// zw - Viewport width & height in pixels
+			int4 	 gViewportRectangle;
+			
+			// xy - (Viewport size in pixels / 2) / Target size in pixels
+			// zw - (Viewport offset in pixels + (Viewport size in pixels / 2) + Optional pixel center offset) / Target size in pixels
+			float4 	 gClipToUVScaleOffset;	
+			float	gAmbientFactor;
+		}
+		
+		/** Converts Z value in range [0,1] into Z value in view space. */
+		float convertFromDeviceZ(float deviceZ)
 		{
-			layout(binding = 0, std140) uniform PerCamera
-			{
-				vec3 gViewDir;
-				vec3 gViewOrigin;
-				mat4 gMatViewProj;
-				mat4 gMatView;
-				mat4 gMatProj;
-				mat4 gMatInvProj;
-				mat4 gMatInvViewProj;
-				mat4 gMatScreenToWorld;
-				vec2 gDeviceZToWorldZ;
-				vec2 gNearFar;
-				ivec4 gViewportRectangle;
-				vec4 gClipToUVScaleOffset;				
-			};
-		};
+			return (1.0f / (deviceZ + gDeviceZToWorldZ.y)) * gDeviceZToWorldZ.x;
+		}
+		
+		/** Converts Z value in range [0,1] into Z value in view space. */
+		float4 convertFromDeviceZ(float4 deviceZ)
+		{
+			return gDeviceZToWorldZ.x / (deviceZ + gDeviceZToWorldZ.y);
+		}		
+		
+		/** Converts Z value from view space to NDC space. */
+		float convertToNDCZ(float viewZ)
+		{
+			return -gNDCZToWorldZ.y + (gNDCZToWorldZ.x / viewZ);
+		}
+		
+		/** Converts Z value from NDC space to device Z value in range [0, 1]. */
+		float NDCZToDeviceZ(float ndcZ)
+		{
+			return (ndcZ + gNDCZToDeviceZ.y) * gNDCZToDeviceZ.x;
+		}
+		
+		/** Converts Z value from device range ([0, 1]) to NDC space. */
+		float DeviceZToNDCZ(float deviceZ)
+		{
+			return deviceZ / gNDCZToDeviceZ.x - gNDCZToDeviceZ.y;
+		}
+		
+		/** Converts position in NDC to UV coordinates mapped to the screen rectangle. */ 
+		float2 NDCToUV(float2 ndcPos)
+		{
+			return ndcPos.xy * gClipToUVScaleOffset.xy + gClipToUVScaleOffset.zw;
+		}
+		
+		/** Converts position in UV coordinates mapped to the screen, to screen coordinates in pixels. */
+		uint2 UVToScreen(float2 uv)
+		{
+			return (uint2)(uv * (float2)gViewportRectangle.zw - ((float2)gViewportRectangle.xy + 0.5f));
+		}
+		
+		/** Converts position in NDC to screen coordinates in pixels. */
+		uint2 NDCToScreen(float2 ndcPos)
+		{
+			float2 uv = NDCToUV(ndcPos);
+			return UVToScreen(uv);
+		}
+		
+		/** Converts position in NDC to world space. */
+		float3 NDCToWorld(float2 ndcPos, float depth)
+		{
+			// x, y are now in clip space, z, w are in view space
+			// We multiply them by a special inverse view-projection matrix, that had the projection entries that effect
+			// z, w eliminated (since they are already in view space)
+			// Note: Multiply by depth should be avoided if using ortographic projection
+			float4 mixedSpacePos = float4(ndcPos.xy * -depth, depth, 1);
+			float4 worldPosition4D = mul(gMatScreenToWorld, mixedSpacePos);
+			
+			return worldPosition4D.xyz / worldPosition4D.w;
+		}
 	};
 };

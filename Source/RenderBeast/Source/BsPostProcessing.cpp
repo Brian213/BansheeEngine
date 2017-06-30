@@ -2,69 +2,136 @@
 //**************** Copyright (c) 2016 Marko Pintera (marko.pintera@gmail.com). All rights reserved. **********************//
 #include "BsPostProcessing.h"
 #include "BsRenderTexture.h"
-#include "BsRenderTexturePool.h"
+#include "BsGpuResourcePool.h"
 #include "BsRendererUtility.h"
 #include "BsTextureManager.h"
 #include "BsCamera.h"
 #include "BsGpuParamsSet.h"
-#include "BsRendererCamera.h"
+#include "BsRendererView.h"
+#include "BsRenderTargets.h"
+#include "BsPixelUtil.h"
+#include "BsBitwise.h"
 
 namespace bs { namespace ct
 {
 	DownsampleParamDef gDownsampleParamDef;
 
-	DownsampleMat::DownsampleMat()
+	template<int Quality, bool MSAA>
+	DownsampleMat<Quality, MSAA>::DownsampleMat()
 	{
 		mParamBuffer = gDownsampleParamDef.createBuffer();
 
-		mParamsSet->setParamBlockBuffer("Input", mParamBuffer);
+		SPtr<GpuParams> gpuParams = mParamsSet->getGpuParams();
+		if(gpuParams->hasParamBlock(GPT_FRAGMENT_PROGRAM, "Input"))
+			mParamsSet->setParamBlockBuffer("Input", mParamBuffer);
+
 		mParamsSet->getGpuParams()->getTextureParam(GPT_FRAGMENT_PROGRAM, "gInputTex", mInputTexture);
 	}
 
-	void DownsampleMat::_initDefines(ShaderDefines& defines)
+	template<int Quality, bool MSAA>
+	void DownsampleMat<Quality, MSAA>::_initDefines(ShaderDefines& defines)
 	{
-		// Do nothing
+		defines.set("QUALITY", Quality);
+		defines.set("MSAA", MSAA ? 1 : 0);
 	}
 
-	void DownsampleMat::execute(const SPtr<RenderTexture>& target, PostProcessInfo& ppInfo)
+	template<int Quality, bool MSAA>
+	void DownsampleMat<Quality, MSAA>::execute(const SPtr<Texture>& target, PostProcessInfo& ppInfo)
 	{
 		// Set parameters
-		SPtr<Texture> colorTexture = target->getColorTexture(0);
-		mInputTexture.set(colorTexture);
+		mInputTexture.set(target);
 
-		const RenderTextureProperties& rtProps = target->getProperties();
-		Vector2 invTextureSize(1.0f / rtProps.getWidth(), 1.0f / rtProps.getHeight());
+		const TextureProperties& rtProps = target->getProperties();
 
-		gDownsampleParamDef.gInvTexSize.set(mParamBuffer, invTextureSize);
+		if(MSAA)
+		{
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, Vector2(-1.0f, -1.0f));
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, Vector2(1.0f, -1.0f));
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, Vector2(-1.0f, 1.0f));
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, Vector2(1.0f, 1.0f));
+		}
+		else
+		{
+			Vector2 invTextureSize(1.0f / rtProps.getWidth(), 1.0f / rtProps.getHeight());
+
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, invTextureSize * Vector2(-1.0f, -1.0f));
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, invTextureSize * Vector2(1.0f, -1.0f));
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, invTextureSize * Vector2(-1.0f, 1.0f));
+			gDownsampleParamDef.gOffsets.set(mParamBuffer, invTextureSize * Vector2(1.0f, 1.0f));
+		}
 
 		// Set output
-		const TextureProperties& colorProps = colorTexture->getProperties();
+		UINT32 width = std::max(1, Math::ceilToInt(rtProps.getWidth() * 0.5f));
+		UINT32 height = std::max(1, Math::ceilToInt(rtProps.getHeight() * 0.5f));
 
-		UINT32 width = std::max(1, Math::ceilToInt(colorProps.getWidth() * 0.5f));
-		UINT32 height = std::max(1, Math::ceilToInt(colorProps.getHeight() * 0.5f));
-
-		mOutputDesc = POOLED_RENDER_TEXTURE_DESC::create2D(colorProps.getFormat(), width, height, TU_RENDERTARGET);
+		mOutputDesc = POOLED_RENDER_TEXTURE_DESC::create2D(rtProps.getFormat(), width, height, TU_RENDERTARGET);
 
 		// Render
-		ppInfo.downsampledSceneTex = RenderTexturePool::instance().get(mOutputDesc);
+		ppInfo.downsampledSceneTex = GpuResourcePool::instance().get(mOutputDesc);
 
 		RenderAPI& rapi = RenderAPI::instance();
-		rapi.setRenderTarget(ppInfo.downsampledSceneTex->renderTexture, true);
+		rapi.setRenderTarget(ppInfo.downsampledSceneTex->renderTexture, FBT_DEPTH | FBT_STENCIL);
 
 		gRendererUtility().setPass(mMaterial);
 		gRendererUtility().setPassParams(mParamsSet);
-		gRendererUtility().drawScreenQuad();
+
+		if (MSAA)
+			gRendererUtility().drawScreenQuad(Rect2(0.0f, 0.0f, (float)rtProps.getWidth(), (float)rtProps.getHeight()));
+		else
+			gRendererUtility().drawScreenQuad();
 
 		rapi.setRenderTarget(nullptr);
 
 		mOutput = ppInfo.downsampledSceneTex->renderTexture;
 	}
 
-	void DownsampleMat::release(PostProcessInfo& ppInfo)
+	template<int Quality, bool MSAA>
+	void DownsampleMat<Quality, MSAA>::release(PostProcessInfo& ppInfo)
 	{
-		RenderTexturePool::instance().release(ppInfo.downsampledSceneTex);
+		GpuResourcePool::instance().release(ppInfo.downsampledSceneTex);
 		mOutput = nullptr;
 	}
+
+	void DownsampleMaterials::execute(UINT32 quality, bool msaa, const SPtr<Texture>& target, PostProcessInfo& ppInfo)
+	{
+		if(quality == 0)
+		{
+			if(msaa)
+				m0_MSAA.execute(target, ppInfo);
+			else
+				m0_NoMSAA.execute(target, ppInfo);
+		}
+		else
+		{
+			if (msaa)
+				m1_MSAA.execute(target, ppInfo);
+			else
+				m1_NoMSAA.execute(target, ppInfo);
+		}
+	}
+
+	void DownsampleMaterials::release(UINT32 quality, bool msaa, PostProcessInfo& ppInfo)
+	{
+		if(quality == 0)
+		{
+			if(msaa)
+				m0_MSAA.release(ppInfo);
+			else
+				m0_NoMSAA.release(ppInfo);
+		}
+		else
+		{
+			if (msaa)
+				m1_MSAA.release(ppInfo);
+			else
+				m1_NoMSAA.release(ppInfo);
+		}
+	}
+
+	template class DownsampleMat<0, false>;
+	template class DownsampleMat<0, true>;
+	template class DownsampleMat<1, false>;
+	template class DownsampleMat<1, true>;
 
 	EyeAdaptHistogramParamDef gEyeAdaptHistogramParamDef;
 
@@ -108,7 +175,7 @@ namespace bs { namespace ct
 			TU_LOADSTORE);
 
 		// Dispatch
-		ppInfo.histogramTex = RenderTexturePool::instance().get(mOutputDesc);
+		ppInfo.histogramTex = GpuResourcePool::instance().get(mOutputDesc);
 
 		mOutputTex.set(ppInfo.histogramTex->texture);
 
@@ -122,7 +189,7 @@ namespace bs { namespace ct
 
 	void EyeAdaptHistogramMat::release(PostProcessInfo& ppInfo)
 	{
-		RenderTexturePool::instance().release(ppInfo.histogramTex);
+		GpuResourcePool::instance().release(ppInfo.histogramTex);
 		mOutput = nullptr;
 	}
 
@@ -193,10 +260,10 @@ namespace bs { namespace ct
 			TU_RENDERTARGET);
 
 		// Render
-		ppInfo.histogramReduceTex = RenderTexturePool::instance().get(mOutputDesc);
+		ppInfo.histogramReduceTex = GpuResourcePool::instance().get(mOutputDesc);
 
 		RenderAPI& rapi = RenderAPI::instance();
-		rapi.setRenderTarget(ppInfo.histogramReduceTex->renderTexture, true);
+		rapi.setRenderTarget(ppInfo.histogramReduceTex->renderTexture, FBT_DEPTH | FBT_STENCIL);
 
 		gRendererUtility().setPass(mMaterial);
 		gRendererUtility().setPassParams(mParamsSet);
@@ -211,7 +278,7 @@ namespace bs { namespace ct
 
 	void EyeAdaptHistogramReduceMat::release(PostProcessInfo& ppInfo)
 	{
-		RenderTexturePool::instance().release(ppInfo.histogramReduceTex);
+		GpuResourcePool::instance().release(ppInfo.histogramReduceTex);
 		mOutput = nullptr;
 	}
 
@@ -236,8 +303,8 @@ namespace bs { namespace ct
 		if(!texturesInitialized)
 		{
 			POOLED_RENDER_TEXTURE_DESC outputDesc = POOLED_RENDER_TEXTURE_DESC::create2D(PF_FLOAT32_R, 1, 1, TU_RENDERTARGET);
-			ppInfo.eyeAdaptationTex[0] = RenderTexturePool::instance().get(outputDesc);
-			ppInfo.eyeAdaptationTex[1] = RenderTexturePool::instance().get(outputDesc);
+			ppInfo.eyeAdaptationTex[0] = GpuResourcePool::instance().get(outputDesc);
+			ppInfo.eyeAdaptationTex[1] = GpuResourcePool::instance().get(outputDesc);
 		}
 
 		ppInfo.lastEyeAdaptationTex = (ppInfo.lastEyeAdaptationTex + 1) % 2; // TODO - Do I really need two targets?
@@ -278,7 +345,7 @@ namespace bs { namespace ct
 		SPtr<PooledRenderTexture> eyeAdaptationRT = ppInfo.eyeAdaptationTex[ppInfo.lastEyeAdaptationTex];
 
 		RenderAPI& rapi = RenderAPI::instance();
-		rapi.setRenderTarget(eyeAdaptationRT->renderTexture, true);
+		rapi.setRenderTarget(eyeAdaptationRT->renderTexture, FBT_DEPTH | FBT_STENCIL);
 
 		gRendererUtility().setPass(mMaterial);
 		gRendererUtility().setPassParams(mParamsSet);
@@ -347,7 +414,7 @@ namespace bs { namespace ct
 			LUT_SIZE, LUT_SIZE, LUT_SIZE, TU_LOADSTORE);
 
 		// Dispatch
-		ppInfo.colorLUT = RenderTexturePool::instance().get(outputDesc);
+		ppInfo.colorLUT = GpuResourcePool::instance().get(outputDesc);
 
 		mOutputTex.set(ppInfo.colorLUT->texture);
 
@@ -360,13 +427,13 @@ namespace bs { namespace ct
 
 	void CreateTonemapLUTMat::release(PostProcessInfo& ppInfo)
 	{
-		RenderTexturePool::instance().release(ppInfo.colorLUT);
+		GpuResourcePool::instance().release(ppInfo.colorLUT);
 	}
 
 	TonemappingParamDef gTonemappingParamDef;
 
-	template<bool GammaOnly, bool AutoExposure>
-	TonemappingMat<GammaOnly, AutoExposure>::TonemappingMat()
+	template<bool GammaOnly, bool AutoExposure, bool MSAA>
+	TonemappingMat<GammaOnly, AutoExposure, MSAA>::TonemappingMat()
 	{
 		mParamBuffer = gTonemappingParamDef.createBuffer();
 		mParamsSet->setParamBlockBuffer("Input", mParamBuffer);
@@ -379,8 +446,8 @@ namespace bs { namespace ct
 			params->getTextureParam(GPT_FRAGMENT_PROGRAM, "gColorLUT", mColorLUT);
 	}
 
-	template<bool GammaOnly, bool AutoExposure>
-	void TonemappingMat<GammaOnly, AutoExposure>::_initDefines(ShaderDefines& defines)
+	template<bool GammaOnly, bool AutoExposure, bool MSAA>
+	void TonemappingMat<GammaOnly, AutoExposure, MSAA>::_initDefines(ShaderDefines& defines)
 	{
 		if(GammaOnly)
 			defines.set("GAMMA_ONLY", 1);
@@ -388,19 +455,22 @@ namespace bs { namespace ct
 		if (AutoExposure)
 			defines.set("AUTO_EXPOSURE", 1);
 
+		defines.set("MSAA", MSAA ? 1 : 0);
 		defines.set("LUT_SIZE", CreateTonemapLUTMat::LUT_SIZE);
 	}
 
-	template<bool GammaOnly, bool AutoExposure>
-	void TonemappingMat<GammaOnly, AutoExposure>::execute(const SPtr<RenderTexture>& sceneColor, 
+	template<bool GammaOnly, bool AutoExposure, bool MSAA>
+	void TonemappingMat<GammaOnly, AutoExposure, MSAA>::execute(const SPtr<Texture>& sceneColor, 
 		const SPtr<RenderTarget>& outputRT, const Rect2& outputRect, PostProcessInfo& ppInfo)
 	{
+		const TextureProperties& texProps = sceneColor->getProperties();
+
 		gTonemappingParamDef.gRawGamma.set(mParamBuffer, 1.0f / ppInfo.settings->gamma);
 		gTonemappingParamDef.gManualExposureScale.set(mParamBuffer, Math::pow(2.0f, ppInfo.settings->exposureScale));
+		gTonemappingParamDef.gNumSamples.set(mParamBuffer, texProps.getNumSamples());
 
 		// Set parameters
-		SPtr<Texture> colorTexture = sceneColor->getColorTexture(0);
-		mInputTex.set(colorTexture);
+		mInputTex.set(sceneColor);
 
 		SPtr<Texture> colorLUT;
 		if(ppInfo.colorLUT != nullptr)
@@ -422,29 +492,663 @@ namespace bs { namespace ct
 
 		gRendererUtility().setPass(mMaterial);
 		gRendererUtility().setPassParams(mParamsSet);
+
+		if (MSAA)
+			gRendererUtility().drawScreenQuad(Rect2(0.0f, 0.0f, (float)texProps.getWidth(), (float)texProps.getHeight()));
+		else
+			gRendererUtility().drawScreenQuad();
+	}
+
+	template class TonemappingMat<false, false, false>;
+	template class TonemappingMat<false, false, true>;
+	template class TonemappingMat<false, true, false>;
+	template class TonemappingMat<false, true, true>;
+	template class TonemappingMat<true, false, false>;
+	template class TonemappingMat<true, false, true>;
+	template class TonemappingMat<true, true, false>;
+	template class TonemappingMat<true, true, true>;
+
+	void TonemappingMaterials::execute(bool gammaOnly, bool autoExposure, bool MSAA, const SPtr<Texture>& sceneColor, 
+		const SPtr<RenderTarget>& outputRT, const Rect2& outputRect, PostProcessInfo& ppInfo)
+	{
+		if (gammaOnly)
+		{
+			if (autoExposure)
+			{
+				if (MSAA)
+					mTTT.execute(sceneColor, outputRT, outputRect, ppInfo);
+				else
+					mTTF.execute(sceneColor, outputRT, outputRect, ppInfo);
+			}
+			else
+			{
+				if (MSAA)
+					mTFT.execute(sceneColor, outputRT, outputRect, ppInfo);
+				else
+					mTFF.execute(sceneColor, outputRT, outputRect, ppInfo);
+			}
+		}
+		else
+		{
+			if (autoExposure)
+			{
+				if (MSAA)
+					mFTT.execute(sceneColor, outputRT, outputRect, ppInfo);
+				else
+					mFTF.execute(sceneColor, outputRT, outputRect, ppInfo);
+			}
+			else
+			{
+				if (MSAA)
+					mFFT.execute(sceneColor, outputRT, outputRect, ppInfo);
+				else
+					mFFF.execute(sceneColor, outputRT, outputRect, ppInfo);
+			}
+		}
+	}
+
+	GaussianBlurParamDef gGaussianBlurParamDef;
+
+	GaussianBlurMat::GaussianBlurMat()
+	{
+		mParamBuffer = gGaussianBlurParamDef.createBuffer();
+
+		mParamsSet->setParamBlockBuffer("Input", mParamBuffer);
+		mParamsSet->getGpuParams()->getTextureParam(GPT_FRAGMENT_PROGRAM, "gInputTex", mInputTexture);
+	}
+
+	void GaussianBlurMat::_initDefines(ShaderDefines& defines)
+	{
+		defines.set("MAX_NUM_SAMPLES", MAX_BLUR_SAMPLES);
+	}
+
+	void GaussianBlurMat::execute(const SPtr<Texture>& source, float filterSize, const SPtr<RenderTexture>& destination)
+	{
+		const TextureProperties& srcProps = source->getProperties();
+		const RenderTextureProperties& dstProps = destination->getProperties();
+
+		Vector2 invTexSize(1.0f / srcProps.getWidth(), 1.0f / srcProps.getHeight());
+
+		std::array<float, MAX_BLUR_SAMPLES> sampleOffsets;
+		std::array<float, MAX_BLUR_SAMPLES> sampleWeights;
+
+		POOLED_RENDER_TEXTURE_DESC tempTextureDesc = POOLED_RENDER_TEXTURE_DESC::create2D(srcProps.getFormat(), 
+			dstProps.getWidth(), dstProps.getHeight(), TU_RENDERTARGET);
+		SPtr<PooledRenderTexture> tempTexture = GpuResourcePool::instance().get(tempTextureDesc);
+
+		auto updateParamBuffer = [&](Direction direction)
+		{
+			float kernelRadius = calcKernelRadius(source, filterSize, direction);
+			UINT32 numSamples = calcStdDistribution(kernelRadius, sampleWeights, sampleOffsets);
+
+			for(UINT32 i = 0; i < (numSamples + 3) / 4; ++i)
+			{
+				UINT32 remainder = std::min(4U, numSamples - i * 4);
+
+				Vector4 weights;
+				for (UINT32 j = 0; j < remainder; ++j)
+					weights[j] = sampleWeights[i * 4 + j];
+
+				gGaussianBlurParamDef.gSampleWeights.set(mParamBuffer, weights, i);
+			}
+
+			UINT32 axis0 = direction == DirHorizontal ? 0 : 1;
+			UINT32 axis1 = (axis0 + 1) % 2;
+
+			for(UINT32 i = 0; i < (numSamples + 1) / 2; ++i)
+			{
+				UINT32 remainder = std::min(2U, numSamples - i * 2);
+
+				Vector4 offset;
+				offset[axis0] = sampleOffsets[i * 2 + 0] * invTexSize[axis0];
+				offset[axis1] = 0.0f;
+
+				if(remainder == 2)
+				{
+					offset[axis0 + 2] = sampleOffsets[i * 2 + 1] * invTexSize[axis0];
+					offset[axis1 + 2] = 0.0f;
+				}
+				else
+				{
+					offset[axis0 + 2] = 0.0f;
+					offset[axis1 + 2] = 0.0f;
+				}
+
+				gGaussianBlurParamDef.gSampleOffsets.set(mParamBuffer, offset, i);
+			}
+
+			gGaussianBlurParamDef.gNumSamples.set(mParamBuffer, numSamples);
+		};
+
+		// Horizontal pass
+		{
+			updateParamBuffer(DirHorizontal);
+			mInputTexture.set(source);
+
+			RenderAPI& rapi = RenderAPI::instance();
+			rapi.setRenderTarget(tempTexture->renderTexture);
+
+			gRendererUtility().setPass(mMaterial);
+			gRendererUtility().setPassParams(mParamsSet);
+			gRendererUtility().drawScreenQuad();
+		}
+
+		// Vertical pass
+		{
+			updateParamBuffer(DirVertical);
+			mInputTexture.set(tempTexture->texture);
+
+			RenderAPI& rapi = RenderAPI::instance();
+			rapi.setRenderTarget(destination);
+
+			gRendererUtility().setPass(mMaterial);
+			gRendererUtility().setPassParams(mParamsSet);
+			gRendererUtility().drawScreenQuad();
+		}
+
+		GpuResourcePool::instance().release(tempTexture);
+	}
+
+	UINT32 GaussianBlurMat::calcStdDistribution(float filterRadius, std::array<float, MAX_BLUR_SAMPLES>& weights, 
+		std::array<float, MAX_BLUR_SAMPLES>& offsets)
+	{
+		filterRadius = Math::clamp(filterRadius, 0.00001f, (float)(MAX_BLUR_SAMPLES - 1));
+		INT32 intFilterRadius = std::min(Math::ceilToInt(filterRadius), MAX_BLUR_SAMPLES - 1);
+
+		auto normalDistribution = [](int i, float scale)
+		{
+			float samplePos = fabs((float)i) * scale;
+			return exp(samplePos * samplePos);
+		};
+
+		// We make use of the hardware linear filtering, and therefore only generate half the number of samples.
+		// The weights and the sampling location needs to be adjusted in order to get the same results as if we
+		// perform two samples separately:
+		//
+		// Original formula is: t1*w1 + t2*w2
+		// With hardware filtering it's: (t1 + (t2 - t1) * o) * w3 
+		//	Or expanded: t1*w3 - t1*o*w3 + t2*o*w3 = t1 * (w3 - o*w3) + t2 * (o*w3)
+		//
+		// These two need to equal, which means this follows:
+		// w1 = w3 - o*w3
+		// w2 = o*w3
+		//
+		// From the second equation get the offset o:
+		// o = w2/w3
+		//
+		// From the first equation and o, get w3:
+		// w1 = w3 - w2
+		// w3 = w1 + w2
+
+		float scale = 1.0f / filterRadius;
+		UINT32 numSamples = 0;
+		float totalWeight = 0.0f;
+		for(int i = -intFilterRadius; i < intFilterRadius; i += 2)
+		{
+			float w1 = normalDistribution(i, scale);
+			float w2 = normalDistribution(i + 1, scale);
+
+			float w3 = w1 + w2;
+			float o = w2/w3; // Relative to first sample
+
+			weights[numSamples] = w3;
+			offsets[numSamples] = o;
+
+			numSamples++;
+			totalWeight += w3;
+		}
+
+		// Special case for last weight, as it doesn't have a matching pair
+		float w = normalDistribution(intFilterRadius, scale);
+		weights[numSamples] = w;
+		offsets[numSamples] = 0.0f;
+
+		numSamples++;
+		totalWeight += w;
+
+		// Normalize weights
+		float invTotalWeight = 1.0f / totalWeight;
+		for(UINT32 i = 0; i < numSamples; i++)
+			weights[i] *= invTotalWeight;
+
+		return numSamples;
+	}
+
+	float GaussianBlurMat::calcKernelRadius(const SPtr<Texture>& source, float scale, Direction filterDir)
+	{
+		scale = Math::clamp01(scale);
+
+		UINT32 length;
+		if (filterDir == DirHorizontal)
+			length = source->getProperties().getWidth();
+		else
+			length = source->getProperties().getHeight();
+
+		// Divide by two because we need the radius
+		return std::min(length * scale / 2, (float)MAX_BLUR_SAMPLES - 1);
+	}
+
+	GaussianDOFParamDef gGaussianDOFParamDef;
+
+	template<bool Near, bool Far>
+	GaussianDOFSeparateMat<Near, Far>::GaussianDOFSeparateMat()
+	{
+		mParamBuffer = gGaussianDOFParamDef.createBuffer();
+
+		mParamsSet->setParamBlockBuffer("Input", mParamBuffer);
+		mParamsSet->getGpuParams()->getTextureParam(GPT_FRAGMENT_PROGRAM, "gColorTex", mColorTexture);
+		mParamsSet->getGpuParams()->getTextureParam(GPT_FRAGMENT_PROGRAM, "gDepthTex", mDepthTexture);
+
+		GpuParamSampState colorSampState;
+		mParamsSet->getGpuParams()->getSamplerStateParam(GPT_FRAGMENT_PROGRAM, "gColorSamp", colorSampState);
+
+		SAMPLER_STATE_DESC desc;
+		desc.minFilter = FO_POINT;
+		desc.magFilter = FO_POINT;
+		desc.mipFilter = FO_POINT;
+		desc.addressMode.u = TAM_CLAMP;
+		desc.addressMode.v = TAM_CLAMP;
+		desc.addressMode.w = TAM_CLAMP;
+
+		SPtr<SamplerState> samplerState = SamplerState::create(desc);
+		colorSampState.set(samplerState);
+	}
+
+	template<bool Near, bool Far>
+	void GaussianDOFSeparateMat<Near, Far>::_initDefines(ShaderDefines& defines)
+	{
+		defines.set("NEAR", Near ? 1 : 0);
+		defines.set("FAR", Far ? 1 : 0);
+		defines.set("NEAR_AND_FAR", (Near && Far) ? 1 : 0);
+	}
+
+	template<bool Near, bool Far>
+	void GaussianDOFSeparateMat<Near, Far>::execute(const SPtr<Texture>& color, const SPtr<Texture>& depth, 
+		const RendererView& view, const DepthOfFieldSettings& settings)
+	{
+		const TextureProperties& srcProps = color->getProperties();
+
+		UINT32 outputWidth = std::max(1U, srcProps.getWidth() / 2);
+		UINT32 outputHeight = std::max(1U, srcProps.getHeight() / 2);
+
+		POOLED_RENDER_TEXTURE_DESC outputTexDesc = POOLED_RENDER_TEXTURE_DESC::create2D(srcProps.getFormat(), 
+			outputWidth, outputHeight, TU_RENDERTARGET);
+		mOutput0 = GpuResourcePool::instance().get(outputTexDesc);
+
+		SPtr<RenderTexture> rt;
+		if (Near && Far)
+		{
+			mOutput1 = GpuResourcePool::instance().get(outputTexDesc);
+
+			RENDER_TEXTURE_DESC rtDesc;
+			rtDesc.colorSurfaces[0].texture = mOutput0->texture;
+			rtDesc.colorSurfaces[1].texture = mOutput1->texture;
+
+			rt = RenderTexture::create(rtDesc);
+		}
+		else
+			rt = mOutput0->renderTexture;
+
+		Vector2 invTexSize(1.0f / srcProps.getWidth(), 1.0f / srcProps.getHeight());
+
+		gGaussianDOFParamDef.gHalfPixelOffset.set(mParamBuffer, invTexSize * 0.5f);
+		gGaussianDOFParamDef.gNearBlurPlane.set(mParamBuffer, settings.focalDistance - settings.focalRange * 0.5f);
+		gGaussianDOFParamDef.gFarBlurPlane.set(mParamBuffer, settings.focalDistance + settings.focalRange * 0.5f);
+		gGaussianDOFParamDef.gInvNearBlurRange.set(mParamBuffer, 1.0f / settings.nearTransitionRange);
+		gGaussianDOFParamDef.gInvFarBlurRange.set(mParamBuffer, 1.0f / settings.farTransitionRange);
+
+		mColorTexture.set(color);
+		mDepthTexture.set(depth);
+
+		SPtr<GpuParamBlockBuffer> perView = view.getPerViewBuffer();
+		mParamsSet->setParamBlockBuffer("PerCamera", perView);
+
+		RenderAPI& rapi = RenderAPI::instance();
+		rapi.setRenderTarget(rt);
+
+		gRendererUtility().setPass(mMaterial);
+		gRendererUtility().setPassParams(mParamsSet);
 		gRendererUtility().drawScreenQuad();
 	}
 
-	template class TonemappingMat<true, true>;
-	template class TonemappingMat<false, true>;
-	template class TonemappingMat<true, false>;
-	template class TonemappingMat<false, false>;
-
-	void PostProcessing::postProcess(RendererCamera* viewInfo, const SPtr<RenderTexture>& sceneColor, float frameDelta)
+	template <bool Near, bool Far>
+	SPtr<PooledRenderTexture> GaussianDOFSeparateMat<Near, Far>::getOutput(UINT32 idx)
 	{
+		if (idx == 0)
+			return mOutput0;
+		else if (idx == 1)
+			return mOutput1;
+
+		return nullptr;
+	}
+
+	template<bool Near, bool Far>
+	void GaussianDOFSeparateMat<Near, Far>::release()
+	{
+		if (mOutput0 != nullptr)
+			GpuResourcePool::instance().release(mOutput0);
+
+		if (mOutput1 != nullptr)
+			GpuResourcePool::instance().release(mOutput1);
+	}
+
+	template class GaussianDOFSeparateMat<true, true>;
+	template class GaussianDOFSeparateMat<true, false>;
+	template class GaussianDOFSeparateMat<false, true>;
+
+	template<bool Near, bool Far>
+	GaussianDOFCombineMat<Near, Far>::GaussianDOFCombineMat()
+	{
+		mParamBuffer = gGaussianDOFParamDef.createBuffer();
+
+		mParamsSet->setParamBlockBuffer("Input", mParamBuffer);
+
+		SPtr<GpuParams> gpuParams = mParamsSet->getGpuParams();
+		gpuParams->getTextureParam(GPT_FRAGMENT_PROGRAM, "gFocusedTex", mFocusedTexture);
+		gpuParams->getTextureParam(GPT_FRAGMENT_PROGRAM, "gDepthTex", mDepthTexture);
+
+		if(gpuParams->hasTexture(GPT_FRAGMENT_PROGRAM, "gNearTex"))
+			gpuParams->getTextureParam(GPT_FRAGMENT_PROGRAM, "gNearTex", mNearTexture);
+
+		if(gpuParams->hasTexture(GPT_FRAGMENT_PROGRAM, "gFarTex"))
+			gpuParams->getTextureParam(GPT_FRAGMENT_PROGRAM, "gFarTex", mFarTexture);
+	}
+
+	template<bool Near, bool Far>
+	void GaussianDOFCombineMat<Near, Far>::_initDefines(ShaderDefines& defines)
+	{
+		defines.set("NEAR", Near ? 1 : 0);
+		defines.set("FAR", Far ? 1 : 0);
+		defines.set("NEAR_AND_FAR", (Near && Far) ? 1 : 0);
+	}
+
+	template<bool Near, bool Far>
+	void GaussianDOFCombineMat<Near, Far>::execute(const SPtr<Texture>& focused, const SPtr<Texture>& near, 
+		const SPtr<Texture>& far, const SPtr<Texture>& depth, const SPtr<RenderTarget>& output,
+		const RendererView& view, const DepthOfFieldSettings& settings)
+	{
+		const TextureProperties& srcProps = focused->getProperties();
+
+		Vector2 invTexSize(1.0f / srcProps.getWidth(), 1.0f / srcProps.getHeight());
+
+		gGaussianDOFParamDef.gHalfPixelOffset.set(mParamBuffer, invTexSize * 0.5f);
+		gGaussianDOFParamDef.gNearBlurPlane.set(mParamBuffer, settings.focalDistance - settings.focalRange * 0.5f);
+		gGaussianDOFParamDef.gFarBlurPlane.set(mParamBuffer, settings.focalDistance + settings.focalRange * 0.5f);
+		gGaussianDOFParamDef.gInvNearBlurRange.set(mParamBuffer, 1.0f / settings.nearTransitionRange);
+		gGaussianDOFParamDef.gInvFarBlurRange.set(mParamBuffer, 1.0f / settings.farTransitionRange);
+
+		mFocusedTexture.set(focused);
+		mNearTexture.set(near);
+		mFarTexture.set(far);
+		mDepthTexture.set(depth);
+
+		SPtr<GpuParamBlockBuffer> perView = view.getPerViewBuffer();
+		mParamsSet->setParamBlockBuffer("PerCamera", perView);
+
+		RenderAPI& rapi = RenderAPI::instance();
+		rapi.setRenderTarget(output);
+
+		gRendererUtility().setPass(mMaterial);
+		gRendererUtility().setPassParams(mParamsSet);
+		gRendererUtility().drawScreenQuad();
+	}
+
+	template class GaussianDOFCombineMat<true, true>;
+	template class GaussianDOFCombineMat<true, false>;
+	template class GaussianDOFCombineMat<false, true>;
+
+	void GaussianDOF::execute(const SPtr<Texture>& sceneColor, const SPtr<Texture>& sceneDepth, 
+		const SPtr<RenderTarget>& output, const RendererView& view, const DepthOfFieldSettings& settings)
+	{
+		bool near = settings.nearBlurAmount > 0.0f;
+		bool far = settings.farBlurAmount > 0.0f;
+
+		// This shouldn't have been called if both are false
+		assert(near || far);
+
+		IGaussianDOFSeparateMat* separateMat;
+		IGaussianDOFCombineMat* combineMat;
+
+		if (near && far)
+		{
+			separateMat = &mSeparateNF;
+			combineMat = &mCombineNF;
+		}
+		else
+		{
+			if(near)
+			{
+				separateMat = &mSeparateN;
+				combineMat = &mCombineN;
+			}
+			else
+			{
+				separateMat = &mSeparateF;
+				combineMat = &mCombineF;
+			}
+		}
+
+		separateMat->execute(sceneColor, sceneDepth, view, settings);
+
+		SPtr<PooledRenderTexture> nearTex, farTex;
+		if(near && far)
+		{
+			nearTex = separateMat->getOutput(0);
+			farTex = separateMat->getOutput(1);
+		}
+		else
+		{
+			if (near)
+				nearTex = separateMat->getOutput(0);
+			else
+				farTex = separateMat->getOutput(0);
+		}
+
+		// Blur the out of focus pixels
+		// Note: Perhaps set up stencil so I can avoid performing blur on unused parts of the textures?
+		const TextureProperties& texProps = nearTex ? nearTex->texture->getProperties() : farTex->texture->getProperties();
+		POOLED_RENDER_TEXTURE_DESC tempTexDesc = POOLED_RENDER_TEXTURE_DESC::create2D(texProps.getFormat(), 
+			texProps.getWidth(), texProps.getHeight(), TU_RENDERTARGET);
+		SPtr<PooledRenderTexture> tempTexture = GpuResourcePool::instance().get(tempTexDesc);
+
+		SPtr<Texture> blurredNearTex;
+		if(nearTex)
+		{
+			mBlur.execute(nearTex->texture, settings.nearBlurAmount, tempTexture->renderTexture);
+			blurredNearTex = tempTexture->texture;
+		}
+
+		SPtr<Texture> blurredFarTex;
+		if(farTex)
+		{
+			// If temporary texture is used up, re-use the original near texture for the blurred result
+			if(blurredNearTex)
+			{
+				mBlur.execute(farTex->texture, settings.farBlurAmount, nearTex->renderTexture);
+				blurredFarTex = nearTex->texture;
+			}
+			else // Otherwise just use the temporary
+			{
+				mBlur.execute(farTex->texture, settings.farBlurAmount, tempTexture->renderTexture);
+				blurredFarTex = tempTexture->texture;
+			}
+		}
+		
+		combineMat->execute(sceneColor, blurredNearTex, blurredFarTex, sceneDepth, output, view, settings);
+
+		separateMat->release();
+		GpuResourcePool::instance().release(tempTexture);
+	}
+
+	bool GaussianDOF::requiresDOF(const DepthOfFieldSettings& settings)
+	{
+		bool near = settings.nearBlurAmount > 0.0f;
+		bool far = settings.farBlurAmount > 0.0f;
+
+		return settings.enabled && (near || far);
+	}
+	
+	template<int MSAA_COUNT>
+	BuildHiZMat<MSAA_COUNT>::BuildHiZMat()
+	{
+		SPtr<GpuParams> gpuParams = mParamsSet->getGpuParams();
+		gpuParams->getTextureParam(GPT_FRAGMENT_PROGRAM, "gDepthTex", mInputTexture);
+	}
+
+	template<int MSAA_COUNT>
+	void BuildHiZMat<MSAA_COUNT>::_initDefines(ShaderDefines& defines)
+	{
+		defines.set("MSAA_COUNT", MSAA_COUNT);
+	}
+
+	template<int MSAA_COUNT>
+	void BuildHiZMat<MSAA_COUNT>::execute(const SPtr<Texture>& source, UINT32 srcMip, const Rect2& srcRect, 
+		const SPtr<RenderTexture>& output)
+	{
+		RenderAPI& rapi = RenderAPI::instance();
+		const TextureProperties& srcProps = source->getProperties();
+
+		mInputTexture.set(source, TextureSurface(srcMip));
+		rapi.setRenderTarget(output);
+
+		gRendererUtility().setPass(mMaterial);
+		gRendererUtility().setPassParams(mParamsSet);
+		gRendererUtility().drawScreenQuad(srcRect);
+	}
+
+	template class BuildHiZMat<1>;
+	template class BuildHiZMat<2>;
+	template class BuildHiZMat<4>;
+	template class BuildHiZMat<8>;
+
+	void BuildHiZ::execute(const RendererViewTargetData& viewInfo, const SPtr<Texture>& source, const SPtr<Texture>& output)
+	{
+		GpuResourcePool& pool = GpuResourcePool::instance();
+
+		// First resolve if MSAA if required
+		SPtr<PooledRenderTexture> resolvedDepth;
+		SPtr<Texture> depthInput;
+		Rect2 srcRect;
+		if (viewInfo.numSamples > 1)
+		{
+			resolvedDepth = pool.get(
+				POOLED_RENDER_TEXTURE_DESC::create2D(
+					PF_FLOAT16_R,
+					viewInfo.viewRect.width,
+					viewInfo.viewRect.height,
+					TU_RENDERTARGET)
+			);
+
+			srcRect.x = (float)viewInfo.viewRect.x;
+			srcRect.y = (float)viewInfo.viewRect.y;
+			srcRect.width = (float)viewInfo.viewRect.width;
+			srcRect.height = (float)viewInfo.viewRect.height;
+
+			switch(viewInfo.numSamples)
+			{
+			case 2:
+				mHiZMatMSAA2.execute(source, 0, srcRect, resolvedDepth->renderTexture);
+				break;
+			case 4:
+				mHiZMatMSAA4.execute(source, 0, srcRect, resolvedDepth->renderTexture);
+				break;
+			case 8:
+				mHiZMatMSAA8.execute(source, 0, srcRect, resolvedDepth->renderTexture);
+				break;
+			default:
+				LOGERR("Invalid MSAA count: " + toString(viewInfo.numSamples));
+				break;
+			}
+
+			depthInput = resolvedDepth->texture;
+			srcRect = Rect2(0, 0, 1, 1);
+		}
+		else
+		{
+			depthInput = source;
+			srcRect = viewInfo.nrmViewRect;
+		}
+
+		// Generate first mip
+		RENDER_TEXTURE_DESC rtDesc;
+		rtDesc.colorSurfaces[0].texture = output;
+		rtDesc.colorSurfaces[0].mipLevel = 0;
+
+		SPtr<RenderTexture> rt = RenderTexture::create(rtDesc);
+		mHiZMatNoMSAA.execute(depthInput, 0, srcRect, rt);
+
+		// Generate remaining mip levels
+		const TextureProperties& outProps = output->getProperties();
+		for(UINT32 i = 1; i <= outProps.getNumMipmaps(); i++)
+		{
+			rtDesc.colorSurfaces[0].mipLevel = i;
+
+			rt = RenderTexture::create(rtDesc);
+			mHiZMatNoMSAA.execute(output, i - 1, Rect2(0, 0, 1, 1), rt);
+		}
+
+		if (resolvedDepth)
+			pool.release(resolvedDepth);
+	}
+
+	POOLED_RENDER_TEXTURE_DESC BuildHiZ::getHiZTextureDesc(UINT32 viewWidth, UINT32 viewHeight)
+	{
+		UINT32 size = Bitwise::nextPow2(std::max(viewWidth, viewHeight));
+		UINT32 numMips = PixelUtil::getMaxMipmaps(size, size, 1, PF_FLOAT16_R);
+
+		return POOLED_RENDER_TEXTURE_DESC::create2D(PF_FLOAT16_R, size, size, TU_RENDERTARGET, 1, false, 1, numMips);
+	}
+
+	FXAAParamDef gFXAAParamDef;
+
+	FXAAMat::FXAAMat()
+	{
+		mParamBuffer = gFXAAParamDef.createBuffer();
+
+		mParamsSet->setParamBlockBuffer("Input", mParamBuffer);
+		mParamsSet->getGpuParams()->getTextureParam(GPT_FRAGMENT_PROGRAM, "gInputTex", mInputTexture);
+	}
+
+	void FXAAMat::_initDefines(ShaderDefines& defines)
+	{
+		// Do nothing
+	}
+
+	void FXAAMat::execute(const SPtr<Texture>& source, const SPtr<RenderTarget>& destination)
+	{
+		const TextureProperties& srcProps = source->getProperties();
+
+		Vector2 invTexSize(1.0f / srcProps.getWidth(), 1.0f / srcProps.getHeight());
+		gFXAAParamDef.gInvTexSize.set(mParamBuffer, invTexSize);
+
+		mInputTexture.set(source);
+
+		RenderAPI& rapi = RenderAPI::instance();
+		rapi.setRenderTarget(destination);
+
+		gRendererUtility().setPass(mMaterial);
+		gRendererUtility().setPassParams(mParamsSet);
+		gRendererUtility().drawScreenQuad();
+}
+
+	void PostProcessing::postProcess(RendererView* viewInfo, const SPtr<RenderTargets>& renderTargets, float frameDelta)
+	{
+		auto& viewProps = viewInfo->getProperties();
+
 		PostProcessInfo& ppInfo = viewInfo->getPPInfo();
 		const StandardPostProcessSettings& settings = *ppInfo.settings;
 
-		SPtr<RenderTarget> finalRT = viewInfo->getFinalTarget();
-		Rect2 viewportRect = viewInfo->getViewportRect();
+		SPtr<Texture> sceneColor = renderTargets->getSceneColor();
+		Rect2 viewportRect = viewProps.nrmViewRect;
 
-		bool hdr = viewInfo->isHDR();
+		bool hdr = viewProps.isHDR;
+		bool msaa = viewProps.numSamples > 1;
 
 		if(hdr && settings.enableAutoExposure)
 		{
-			mDownsample.execute(sceneColor, ppInfo);
+			mDownsample.execute(1, msaa, sceneColor, ppInfo);
 			mEyeAdaptHistogram.execute(ppInfo);
-			mDownsample.release(ppInfo);
+			mDownsample.release(1, msaa, ppInfo);
 
 			mEyeAdaptHistogramReduce.execute(ppInfo);
 			mEyeAdaptHistogram.release(ppInfo);
@@ -453,22 +1157,79 @@ namespace bs { namespace ct
 			mEyeAdaptHistogramReduce.release(ppInfo);
 		}
 
-		if (hdr && settings.enableTonemapping)
+		bool gammaOnly;
+		bool autoExposure;
+		if (hdr)
 		{
-			if (ppInfo.settingDirty) // Rebuild LUT if PP settings changed
-				mCreateLUT.execute(ppInfo);
+			if (settings.enableTonemapping)
+			{
+				if (ppInfo.settingDirty) // Rebuild LUT if PP settings changed
+					mCreateLUT.execute(ppInfo);
 
-			if (settings.enableAutoExposure)
-				mTonemapping_AE.execute(sceneColor, finalRT, viewportRect, ppInfo);
+				gammaOnly = false;
+			}
 			else
-				mTonemapping.execute(sceneColor, finalRT, viewportRect, ppInfo);
+				gammaOnly = true;
+
+			autoExposure = settings.enableAutoExposure;
 		}
 		else
 		{
-			if (hdr && settings.enableAutoExposure)
-				mTonemapping_AE_GO.execute(sceneColor, finalRT, viewportRect, ppInfo);
+			gammaOnly = true;
+			autoExposure = false;
+		}
+
+		bool performDOF = GaussianDOF::requiresDOF(settings.depthOfField);
+
+		SPtr<RenderTarget> tonemapTarget;
+		if (!performDOF && !settings.enableFXAA)
+			tonemapTarget = viewProps.target;
+		else
+		{
+			renderTargets->allocate(RTT_ResolvedSceneColorSecondary);
+			tonemapTarget = renderTargets->getResolvedSceneColorRT(true);
+		}
+
+		mTonemapping.execute(gammaOnly, autoExposure, msaa, sceneColor, tonemapTarget, viewportRect, ppInfo);
+
+		if(performDOF)
+		{
+			SPtr<RenderTarget> dofTarget;
+
+			// If DOF is the final effect, output to final target, otherwise use a temporary
+			if (settings.enableFXAA)
+			{
+				renderTargets->allocate(RTT_ResolvedSceneColor);
+				dofTarget = renderTargets->getResolvedSceneColorRT(false);
+			}
 			else
-				mTonemapping_GO.execute(sceneColor, finalRT, viewportRect, ppInfo);
+				dofTarget = viewProps.target;
+
+			// Use the HiZ buffer instead of main scene depth since DOF shaders don't support MSAA, and HiZ is guaranteed to
+			// be resolved.
+			SPtr<Texture> sceneDepth = renderTargets->getHiZ();
+
+			mGaussianDOF.execute(renderTargets->getResolvedSceneColor(true), sceneDepth, dofTarget, *viewInfo, 
+				settings.depthOfField);
+
+			renderTargets->release(RTT_ResolvedSceneColorSecondary);
+		}
+
+		if(settings.enableFXAA)
+		{
+			SPtr<Texture> fxaaSource;
+			if (performDOF)
+				fxaaSource = renderTargets->getResolvedSceneColor(false);
+			else
+				fxaaSource = renderTargets->getResolvedSceneColor(true);
+
+			// Note: I could skip executing FXAA over DOF and motion blurred pixels
+			mFXAA.execute(fxaaSource, viewProps.target);
+
+			if (performDOF)
+				renderTargets->release(RTT_ResolvedSceneColor);
+			else
+				renderTargets->release(RTT_ResolvedSceneColorSecondary);
 		}
 
 		if (ppInfo.settingDirty)

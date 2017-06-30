@@ -1,21 +1,11 @@
 #include "$EDITOR$/PickingCull.bslinc"
 
-Technique : inherits("PickingCull") =
+technique PickingCullCCW
 {
-	Language = "HLSL11";
-	
-	Pass =
-	{
-		Cull = CCW;
-	};
-};
+	mixin PickingCull;
 
-Technique : inherits("PickingCull") =
-{
-	Language = "GLSL";
-	
-	Pass =
+	raster
 	{
-		Cull = CCW;
+		cull = ccw;
 	};
 };

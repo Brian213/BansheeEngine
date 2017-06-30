@@ -1,144 +1,105 @@
 #include "$ENGINE$\PerCameraData.bslinc"
+#include "$ENGINE$\LightGridCommon.bslinc"
 
-Technique : inherits("PerCameraData") = 
+technique LightGridLLReduction
 {
-	Language = "HLSL11";
-	
-	Pass =
-	{
-		Compute = 
-		{
-			cbuffer Params : register(b0)
-			{
-				// Offsets at which specific light types begin in gLights buffer
-				// Assumed directional lights start at 0
-				// x - offset to point lights, y - offset to spot lights, z - total number of lights
-				uint3 gLightOffsets;			
-				uint gNumCells;
-				uint3 gGridSize;
-				uint gMaxNumLightsPerCell;
-			}
-			
-			Buffer<uint> gLinkedListHeads : register(t0);
-			Buffer<uint2> gLinkedList : register(t1);
-			
-			RWBuffer<uint> gGridDataCounter : register(u0);
-			RWBuffer<uint2> gGridLightOffsetAndSize : register(u1);
-			RWBuffer<uint> gGridLightIndices : register(u2);
-			
-			[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, THREADGROUP_SIZE)]
-			void main(
-				uint3 groupId : SV_GroupID,
-				uint3 groupThreadId : SV_GroupThreadID,
-				uint3 dispatchThreadId : SV_DispatchThreadID)
-			{
-				uint2 viewportMax = gViewportRectangle.xy + gViewportRectangle.zw;
+	mixin PerCameraData;
+	mixin LightGridCommon; 
 
-				// Ignore pixels out of valid range
-				if (all(dispatchThreadId.xy >= viewportMax))
-					return;
-					
-				uint maxNumLinks = gNumCells * gMaxNumLightsPerCell;	
-				uint cellIdx = (dispatchThreadId.z * gGridSize.y + dispatchThreadId.y) * gGridSize.x + dispatchThreadId.x;
-				
-				// First count total number of lights affecting the tile
-				uint currentIdx = gLinkedListHeads[cellIdx];
-				uint numLights = 0;
-				while(currentIdx != 0xFFFFFFFF)
-				{
-					numLights++;
-					currentIdx = gLinkedList[currentIdx].y;
-				}
-				
-				// Allocate enough room and remember the offset to indices
-				uint indicesStart;
-				InterlockedAdd(gGridDataCounter[0], numLights, indicesStart);
-				gGridLightOffsetAndSize[cellIdx] = uint2(indicesStart, numLights);
-				
-				// Actually write light indices
-				// Note: Values are written in the reverse order than they were found in
-				currentIdx = gLinkedListHeads[cellIdx];
-				uint lightIdx = 0;
-				while(currentIdx != 0xFFFFFFFF)
-				{
-					uint2 entry = gLinkedList[currentIdx];
-				
-					gGridLightIndices[indicesStart + lightIdx] = entry.x;
-					
-					currentIdx = entry.y;
-					lightIdx++;
-				}
-			}
-		};
-	};
-};
-
-Technique : inherits("PerCameraData") = 
-{
-	Language = "GLSL";
-	
-	Pass =
+	code
 	{
-		Compute = 
-		{
-			layout (local_size_x = THREADGROUP_SIZE, local_size_y = THREADGROUP_SIZE, local_size_z = THREADGROUP_SIZE) in;
+		Buffer<uint> gLightsLLHeads;
+		Buffer<uint4> gLightsLL;
+					
+		Buffer<uint> gProbesLLHeads;
+		Buffer<uint2> gProbesLL;
 		
-			layout(binding = 0, std140) uniform Params
-			{
-				// Offsets at which specific light types begin in gLights buffer
-				// Assumed directional lights start at 0
-				// x - offset to point lights, y - offset to spot lights, z - total number of lights
-				uvec3 gLightOffsets;			
-				uint gNumCells;
-				uvec3 gGridSize;
-				uint gMaxNumLightsPerCell;
-			};
-			
-			layout(binding = 1) uniform usamplerBuffer gLinkedListHeads;
-			layout(binding = 2) uniform usamplerBuffer gLinkedList;
-			
-			layout(binding = 3, r32ui) uniform uimageBuffer gGridDataCounter;
-			layout(binding = 4, rg32ui) uniform uimageBuffer gGridLightOffsetAndSize;
-			layout(binding = 5, r32ui) uniform uimageBuffer gGridLightIndices;
-			
-			void main()
-			{
-				uvec2 viewportMax = gViewportRectangle.xy + gViewportRectangle.zw;
+		[layout(r32ui)]
+		RWBuffer<uint> gGridDataCounter;
+		
+		RWBuffer<uint4> gGridLightOffsetAndSize;
+		RWBuffer<uint> gGridLightIndices;
 
-				// Ignore pixels out of valid range
-				if (all(greaterThanEqual(gl_GlobalInvocationID.xy, viewportMax)))
-					return;
-					
-				uint maxNumLinks = gNumCells * gMaxNumLightsPerCell;	
-				int cellIdx = int((gl_GlobalInvocationID.z * gGridSize.y + gl_GlobalInvocationID.y) * gGridSize.x + gl_GlobalInvocationID.x);
+		RWBuffer<uint2> gGridProbeOffsetAndSize;
+		RWBuffer<uint> gGridProbeIndices;
+		
+		[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, THREADGROUP_SIZE)]
+		void csmain(
+			uint3 groupId : SV_GroupID,
+			uint3 groupThreadId : SV_GroupThreadID,
+			uint3 dispatchThreadId : SV_DispatchThreadID)
+		{
+			// Ignore pixels out of valid range
+			if (any(dispatchThreadId.xy >= gGridSize.xy))
+				return;
 				
-				// First count total number of lights affecting the tile
-				int currentIdx = int(texelFetch(gLinkedListHeads, cellIdx).x);
-				uint numLights = 0;
-				while(currentIdx != 0xFFFFFFFF)
-				{
-					numLights++;
-					currentIdx = int(texelFetch(gLinkedList, currentIdx).y);
-				}
-				
-				// Allocate enough room and remember the offset to indices
-				uint indicesStart = imageAtomicAdd(gGridDataCounter, 0, numLights);
-				imageStore(gGridLightOffsetAndSize, cellIdx, uvec4(indicesStart, numLights, 0, 0));
+			uint maxNumLinks = gNumCells * gMaxNumLightsPerCell;	
+			uint cellIdx = (dispatchThreadId.z * gGridSize.y + dispatchThreadId.y) * gGridSize.x + dispatchThreadId.x;
+			
+			// Reduce lights
+			//// First count total number of lights affecting the tile
+			uint currentIdx = gLightsLLHeads[cellIdx];
+			uint numRadialLights = 0;
+			uint numSpotLights = 0;
+			while(currentIdx != 0xFFFFFFFF)
+			{
+				uint4 entry = gLightsLL[currentIdx];
+			
+				if(entry.y == 1) // Radial
+					numRadialLights++;
+				else // Spot
+					numSpotLights++;
 
-				// Actually write light indices
-				// Note: Values are written in the reverse order than they were found in
-				currentIdx = int(texelFetch(gLinkedListHeads, cellIdx).x);
-				uint lightIdx = 0;
-				while(currentIdx != 0xFFFFFFFF)
-				{
-					uvec2 entry = texelFetch(gLinkedList, currentIdx).xy;
-				
-					imageStore(gGridLightIndices, int(indicesStart + lightIdx), uvec4(entry.x, 0, 0, 0));
-					
-					currentIdx = int(entry.y);
-					lightIdx++;
-				}
+				currentIdx = entry.z;
 			}
-		};
+			
+			//// Allocate enough room and remember the offset to indices
+			uint numLights = numRadialLights + numSpotLights;
+			uint indicesStart;
+			InterlockedAdd(gGridDataCounter[0], numLights, indicesStart);
+			gGridLightOffsetAndSize[cellIdx] = uint4(indicesStart, numRadialLights, numSpotLights, 0);
+			
+			//// Actually write light indices (reverse order, so that radial lights come first, as is the convention)
+			currentIdx = gLightsLLHeads[cellIdx];
+			uint lightIdx = 0;
+			while(currentIdx != 0xFFFFFFFF)
+			{
+				uint4 entry = gLightsLL[currentIdx];
+			
+				gGridLightIndices[indicesStart + numLights - 1 - lightIdx] = entry.x;
+				
+				currentIdx = entry.z;
+				lightIdx++;
+			}
+			
+			// Reduce probes
+			//// First count total number of probes affecting the tile
+			currentIdx = gProbesLLHeads[cellIdx];
+			uint numProbes = 0;
+			while(currentIdx != 0xFFFFFFFF)
+			{
+				uint2 entry = gProbesLL[currentIdx];
+			
+				numProbes++;
+				currentIdx = entry.y;
+			}
+			
+			//// Allocate enough room and remember the offset to indices
+			InterlockedAdd(gGridDataCounter[1], numProbes, indicesStart);
+			gGridProbeOffsetAndSize[cellIdx] = uint2(indicesStart, numProbes);
+			
+			//// Actually write probe indices (reverse order, in order to restore original order since LL was formed in reverse)
+			currentIdx = gProbesLLHeads[cellIdx];
+			uint probeIdx = 0;
+			while(currentIdx != 0xFFFFFFFF)
+			{
+				uint2 entry = gProbesLL[currentIdx];
+			
+				gGridProbeIndices[indicesStart + numProbes - 1 - probeIdx] = entry.x;
+				
+				currentIdx = entry.y;
+				probeIdx++;
+			}
+		}
 	};
 };

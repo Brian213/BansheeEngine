@@ -41,8 +41,7 @@ namespace bs
 	{
 		HAnimationClip clip = AnimationClip::create();
 
-		ScriptAnimationClip* scriptInstance;
-		ScriptResourceManager::instance().createScriptResource(instance, clip, &scriptInstance);
+		ScriptResourceBase* scriptInstance = ScriptResourceManager::instance().createBuiltinScriptResource(clip, instance);
 	}
 
 	MonoObject* ScriptAnimationClip::internal_GetAnimationCurves(ScriptAnimationClip* thisPtr)
@@ -126,11 +125,11 @@ namespace bs
 		AnimationEvent output;
 
 		MonoString* monoName = nullptr;
-		sNameField->getValue(instance, &monoName);
+		sNameField->get(instance, &monoName);
 
 		output.name = MonoUtil::monoToString(monoName);
 
-		sTimeField->getValue(instance, &output.time);
+		sTimeField->get(instance, &output.time);
 
 		return output;
 	}

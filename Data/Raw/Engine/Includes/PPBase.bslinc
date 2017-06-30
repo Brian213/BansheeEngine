@@ -1,71 +1,33 @@
-Technique : base("PPBase") =
+mixin PPBase
 {
-	Language = "HLSL11";
-	
-	Pass =
+	depth
 	{
-		DepthWrite = false;
-		DepthRead = false;
-	
-		Common = 
-		{
-			struct VStoFS
-			{
-				float4 position : SV_POSITION;
-				float2 uv0 : TEXCOORD0;
-			};
-		};
-
-		Vertex =
-		{
-			struct VertexInput
-			{
-				float2 screenPos : POSITION;
-				float2 uv0 : TEXCOORD0;
-			};
-			
-			VStoFS main(VertexInput input)
-			{
-				VStoFS output;
-			
-				output.position = float4(input.screenPos, 0, 1);
-				output.uv0 = input.uv0;
-
-				return output;
-			}			
-		};
+		write = false;
+		read = false;
 	};
-};
 
-Technique : base("PPBase") =
-{
-	Language = "GLSL";
-	
-	Pass =
+	code
 	{
-		DepthWrite = false;
-		DepthRead = false;
-	
-		Vertex =
+		struct VStoFS
 		{
-			layout(location = 0) in vec2 bs_position;
-			layout(location = 1) in vec2 bs_texcoord0;
-			
-			out VStoFS
-			{
-				layout(location = 0) vec2 uv0;
-			} VSOutput;
-			
-			out gl_PerVertex
-			{
-				vec4 gl_Position;
-			};
-		
-			void main()
-			{
-				gl_Position = vec4(bs_position, 0, 1);
-				VSOutput.uv0 = bs_texcoord0;
-			}			
+			float4 position : SV_POSITION;
+			float2 uv0 : TEXCOORD0;
 		};
+
+		struct VertexInput
+		{
+			float2 screenPos : POSITION;
+			float2 uv0 : TEXCOORD0;
+		};
+		
+		VStoFS vsmain(VertexInput input)
+		{
+			VStoFS output;
+		
+			output.position = float4(input.screenPos, 0, 1);
+			output.uv0 = input.uv0;
+
+			return output;
+		}			
 	};
 };

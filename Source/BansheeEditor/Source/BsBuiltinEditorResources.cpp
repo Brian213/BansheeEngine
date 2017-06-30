@@ -327,7 +327,9 @@ namespace bs
 
 		// Update from raw assets if needed
 #if BS_DEBUG_MODE
-		if (BuiltinResourcesHelper::checkForModifications(BuiltinRawDataFolder, BuiltinDataFolder + L"Timestamp.asset"))
+		UINT32 modifications =
+			BuiltinResourcesHelper::checkForModifications(BuiltinRawDataFolder, BuiltinDataFolder + L"Timestamp.asset");
+		if (modifications > 0)
 		{
 			SPtr<ResourceManifest> oldResourceManifest;
 			if (FileSystem::exists(ResourceManifestPath))
@@ -340,7 +342,7 @@ namespace bs
 			mResourceManifest = ResourceManifest::create("BuiltinResources");
 			gResources().registerResourceManifest(mResourceManifest);
 
-			preprocess();
+			preprocess(modifications == 2);
 			BuiltinResourcesHelper::writeTimestamp(BuiltinDataFolder + L"Timestamp.asset");
 
 			ResourceManifest::save(mResourceManifest, ResourceManifestPath, BuiltinDataFolder);
@@ -391,7 +393,7 @@ namespace bs
 	BuiltinEditorResources::~BuiltinEditorResources()
 	{ }
 
-	void BuiltinEditorResources::preprocess()
+	void BuiltinEditorResources::preprocess(bool forceImport)
 	{
 		Resources::instance().unloadAllUnused();
 
@@ -429,10 +431,14 @@ namespace bs
 			dataListStream->close();
 		}
 
-		BuiltinResourcesHelper::importAssets(iconsJSON, EditorRawIconsFolder, EditorIconFolder, mResourceManifest, BuiltinResourcesHelper::AssetType::Sprite);
-		BuiltinResourcesHelper::importAssets(includesJSON, EditorRawShaderIncludeFolder, EditorShaderIncludeFolder, mResourceManifest); // Hidden dependency: Includes must be imported before shaders
-		BuiltinResourcesHelper::importAssets(shadersJSON, EditorRawShaderFolder, EditorShaderFolder, mResourceManifest);
-		BuiltinResourcesHelper::importAssets(skinJSON, EditorRawSkinFolder, EditorSkinFolder, mResourceManifest, BuiltinResourcesHelper::AssetType::Sprite);
+		BuiltinResourcesHelper::importAssets(iconsJSON, EditorRawIconsFolder, EditorIconFolder, mResourceManifest, 
+			BuiltinResourcesHelper::AssetType::Sprite, true);
+		BuiltinResourcesHelper::importAssets(includesJSON, EditorRawShaderIncludeFolder, EditorShaderIncludeFolder, 
+			mResourceManifest, BuiltinResourcesHelper::AssetType::Normal, true); // Hidden dependency: Includes must be imported before shaders
+		BuiltinResourcesHelper::importAssets(shadersJSON, EditorRawShaderFolder, EditorShaderFolder, mResourceManifest,
+			BuiltinResourcesHelper::AssetType::Normal, true);
+		BuiltinResourcesHelper::importAssets(skinJSON, EditorRawSkinFolder, EditorSkinFolder, mResourceManifest, 
+			BuiltinResourcesHelper::AssetType::Sprite, true);
 
 		// Import fonts
 		BuiltinResourcesHelper::importFont(BuiltinRawDataFolder + DefaultFontFilename, DefaultFontFilename, 
@@ -731,17 +737,16 @@ namespace bs
 		inputBoxStyle.hover.textColor = TextNormalColor;
 		inputBoxStyle.focused.textColor = TextNormalColor;
 		inputBoxStyle.active.textColor = TextNormalColor;
-		inputBoxStyle.border.left = 4;
-		inputBoxStyle.border.right = 4;
+		inputBoxStyle.border.left = 1;
+		inputBoxStyle.border.right = 3;
 		inputBoxStyle.border.top = 4;
-		inputBoxStyle.border.bottom = 6;
+		inputBoxStyle.border.bottom = 1;
 		inputBoxStyle.contentOffset.left = 4;
 		inputBoxStyle.contentOffset.right = 4;
 		inputBoxStyle.contentOffset.top = 4;
 		inputBoxStyle.contentOffset.bottom = 4;
-		inputBoxStyle.margins.bottom = 2;
 		inputBoxStyle.fixedHeight = true;
-		inputBoxStyle.height = 21;
+		inputBoxStyle.height = 19;
 		inputBoxStyle.minWidth = 10;
 		inputBoxStyle.font = defaultFont;
 		inputBoxStyle.fontSize = DefaultFontSize;
@@ -2061,7 +2066,13 @@ namespace bs
 		Path programPath = EditorShaderFolder;
 		programPath.append(name + L".asset");
 
-		return gResources().load<Shader>(programPath);
+		HShader shader = gResources().load<Shader>(programPath);
+
+#if BS_DEBUG_MODE
+		BuiltinResourcesHelper::verifyAndReportShader(shader);
+#endif
+
+		return shader;
 	}
 
 	HMaterial BuiltinEditorResources::createDockDropOverlayMaterial() const

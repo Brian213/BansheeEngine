@@ -4,20 +4,33 @@
 
 #include "BsMonoPrerequisites.h"
 
-#if (BS_PLATFORM == BS_PLATFORM_WIN32) && !defined(__MINGW32__)
-#	ifdef BS_SCR_BE_EXPORTS
-#		define BS_SCR_BE_EXPORT __declspec(dllexport)
-#	else
-#       if defined( __MINGW32__ )
-#           define BS_SCR_BE_EXPORT
-#       else
-#    		define BS_SCR_BE_EXPORT __declspec(dllimport)
-#       endif
-#	endif
-#elif defined ( BS_GCC_VISIBILITY )
-#    define BS_SCR_BE_EXPORT  __attribute__ ((visibility("default")))
-#else
-#    define BS_SCR_BE_EXPORT
+// DLL export
+#if BS_PLATFORM == BS_PLATFORM_WIN32 // Windows
+#  if BS_COMPILER == BS_COMPILER_MSVC
+#    if defined(BS_STATIC_LIB)
+#      define BS_SCR_BE_EXPORT
+#    else
+#      if defined(BS_SCR_BE_EXPORTS)
+#        define BS_SCR_BE_EXPORT __declspec(dllexport)
+#      else
+#        define BS_SCR_BE_EXPORT __declspec(dllimport)
+#      endif
+#	 endif
+#  else
+#    if defined(BS_STATIC_LIB)
+#      define BS_SCR_BE_EXPORT
+#    else
+#      if defined(BS_SCR_BE_EXPORTS)
+#        define BS_SCR_BE_EXPORT __attribute__ ((dllexport))
+#      else
+#        define BS_SCR_BE_EXPORT __attribute__ ((dllimport))
+#      endif
+#	 endif
+#  endif
+#  define BS_SCR_BE_HIDDEN
+#else // Linux/Mac settings
+#  define BS_SCR_BE_EXPORT __attribute__ ((visibility ("default")))
+#  define BS_SCR_BE_HIDDEN __attribute__ ((visibility ("hidden")))
 #endif
 
 /** @addtogroup Plugins
@@ -50,9 +63,7 @@ namespace bs
 	class ScriptFont;
 	class ScriptSpriteTexture;
 	class ScriptShaderInclude;
-	class ScriptTexture2D;
-	class ScriptTexture3D;
-	class ScriptTextureCube;
+	class ScriptTexture;
 	class ScriptPlainText;
 	class ScriptScriptCode;
 	class ScriptShader;
@@ -68,12 +79,13 @@ namespace bs
 	class ScriptGUIScrollAreaLayout;
 	class ScriptGameObjectBase;
 	class ScriptSceneObject;
+	class ScriptComponentBase;
 	class ScriptComponent;
+	class ScriptManagedComponent;
 	class ScriptManagedResource;
 	class ScriptRenderTarget;
 	class ScriptRenderTexture2D;
 	class ScriptCamera;
-	class ScriptTextureBase;
 	class ScriptMeshData;
 	class ManagedComponent;
 	class ManagedSerializableFieldData;
@@ -107,6 +119,7 @@ namespace bs
 	class ScriptRigidbody;
 	class ScriptColliderBase;
 	class ScriptAudioClip;
+	struct ScriptMeta;
 
 	typedef GameObjectHandle<ManagedComponent> HManagedComponent;
 	typedef ResourceHandle<ManagedResource> HManagedResource;
@@ -165,5 +178,31 @@ namespace bs
 		TID_SerializableTypeInfoRef = 50050,
 		TID_SerializableFieldInfo = 50051,
 		TID_SerializablePropertyInfo = 50052
+	};
+
+	/** Information about a builtin component wrapped as a script object. */
+	struct BuiltinComponentInfo
+	{
+		const ScriptMeta* metaData;
+		UINT32 typeId;
+		MonoClass* monoClass;
+		std::function<ScriptComponentBase*(const HComponent&)> createCallback;
+	};
+
+	/**	Types of resources accessible from script code. */
+	enum class ScriptResourceType // Note: Must be the same as C# enum ResourceType
+	{
+		Texture, SpriteTexture, Mesh, Font, Shader, ShaderInclude, Material, Prefab,
+		PlainText, ScriptCode, StringTable, GUISkin, PhysicsMaterial, PhysicsMesh, AudioClip, AnimationClip, Undefined
+	};
+
+	/** Information about a builtin resource wrapped as a script object. */
+	struct BuiltinResourceInfo
+	{
+		const ScriptMeta* metaData;
+		UINT32 typeId;
+		MonoClass* monoClass;
+		ScriptResourceType resType;
+		std::function<ScriptResourceBase*(const HResource&, MonoObject*)> createCallback;
 	};
 }

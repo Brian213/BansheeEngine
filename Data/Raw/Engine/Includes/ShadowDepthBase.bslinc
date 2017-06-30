@@ -1,0 +1,149 @@
+#include "$ENGINE$\PerObjectData.bslinc"
+
+#include "$ENGINE$\SkinnedVertexInput.bslinc"
+#include "$ENGINE$\NormalVertexInput.bslinc"
+#define USE_BLEND_SHAPES
+#include "$ENGINE$\SkinnedVertexInput.bslinc"
+#include "$ENGINE$\NormalVertexInput.bslinc"
+#undef USE_BLEND_SHAPES
+
+mixin ShadowDepthBase
+{
+	code
+	{
+		struct ShadowVStoFS
+		{
+			float4 position : SV_Position;
+			
+			#ifdef USES_GS
+			float4 worldPos : TEXCOORD0;
+			#else
+			#ifdef USES_PS
+				float shadowPos : TEXCOORD0;
+			#endif
+			#endif
+		};
+		
+		cbuffer ShadowParams
+		{
+			float4x4 gMatViewProj;
+			float2 gNDCZToDeviceZ;
+			float gDepthBias;
+			float gInvDepthRange;
+		};
+		
+		/** Converts Z value from device range ([0, 1]) to NDC space. */
+		float DeviceZToNDCZ(float deviceZ)
+		{
+			return deviceZ / gNDCZToDeviceZ.x - gNDCZToDeviceZ.y;
+		}
+		
+		/** Converts Z value from NDC space to device Z value in range [0, 1]. */
+		float NDCZToDeviceZ(float ndcZ)
+		{
+			return (ndcZ + gNDCZToDeviceZ.y) * gNDCZToDeviceZ.x;
+		}		
+
+		void linearizeDepth(inout float4 clipPos)
+		{	
+			#ifdef CLAMP_TO_NEAR_PLANE
+			float ndcZ = clipPos.z / clipPos.w;
+			float deviceZ = NDCZToDeviceZ(ndcZ);
+			
+			// Clamp to near plane if behind it
+			if (deviceZ < 0)
+			{
+				clipPos.z = DeviceZToNDCZ(0);
+				clipPos.w = 1.0f;
+			}
+			#endif
+
+			// Output linear depth
+			#ifdef LINEAR_DEPTH_RANGE
+				float linearDepth = clipPos.z * gInvDepthRange + gDepthBias;
+				clipPos.z = linearDepth * clipPos.w;
+			#endif
+		}		
+	
+		ShadowVStoFS vsmain(VertexInput_PO input)
+		{
+			ShadowVStoFS output;
+		
+			float4 worldPosition = getVertexWorldPosition(input);
+			
+			// If using a geometry shader, just pass through the relevant information
+			// as the GS does the necessary transform and applies the depth bias
+			#ifdef USES_GS
+			output.worldPos = worldPosition;
+			output.position = worldPosition;
+			#else // USES_GS
+			
+			// Not using a geometry shader, transform to clip space
+			float4 clipPos = mul(gMatViewProj, worldPosition);
+			
+			// Clamp geometry behind the near plane
+			#ifdef CLAMP_TO_NEAR_PLANE
+				float ndcZ = clipPos.z / clipPos.w;
+				float deviceZ = NDCZToDeviceZ(ndcZ);
+			
+				if (deviceZ < 0)
+				{
+					clipPos.z = DeviceZToNDCZ(0);
+					clipPos.w = 1.0f;
+				}
+			#endif // CLAMP_TO_NEAR_PLANE
+
+			// If using a pixel shader, output shadow depth in clip space, as
+			// we'll apply bias to it in PS (depth needs to be interpolated in
+			// a perspective correct way)
+			#ifdef USES_PS
+				output.shadowPos = clipPos.z;
+			#else // Otherwise apply bias immediately
+				clipPos.z += gDepthBias;
+			#endif // USES_PS
+			
+			output.position = clipPos;
+			#endif // USES_GS
+			
+			return output;
+		}
+	};
+};
+
+technique ShadowDepth
+{
+	mixin PerObjectData;
+	mixin NormalVertexInput;
+	mixin ShadowDepthBase;
+	mixin ShadowDepth;
+};
+
+technique ShadowDepthSkinned
+{
+	mixin PerObjectData;
+	mixin SkinnedVertexInput;
+	mixin ShadowDepthBase;
+	mixin ShadowDepth;
+
+	tags = { "Skinned" };
+};
+
+technique ShadowDepthMorph
+{
+	mixin PerObjectData;
+	mixin MorphVertexInput;
+	mixin ShadowDepthBase;
+	mixin ShadowDepth;
+
+	tags = { "Morph" };
+};
+
+technique ShadowDepthSkinnedMorph
+{
+	mixin PerObjectData;
+	mixin SkinnedMorphVertexInput;
+	mixin ShadowDepthBase;
+	mixin ShadowDepth;
+
+	tags = { "SkinnedMorph" };
+};

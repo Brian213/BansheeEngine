@@ -98,7 +98,7 @@ namespace bs { namespace ct
 
 	const String& VulkanRenderAPI::getShadingLanguageName() const
 	{
-		static String strName("glsl");
+		static String strName("vksl");
 		return strName;
 	}
 
@@ -219,6 +219,14 @@ namespace bs { namespace ct
 #else
 		static_assert(false, "mVideoModeInfo needs to be created.")
 #endif
+
+		GPUInfo gpuInfo;
+		gpuInfo.numGPUs = std::min(5U, mNumDevices);
+
+		for(UINT32 i = 0; i < gpuInfo.numGPUs; i++)
+			gpuInfo.names[i] = mDevices[i]->getDeviceProperties().deviceName;
+
+		PlatformUtility::_setGPUInfo(gpuInfo);
 
 		// Get required extension functions
 		GET_INSTANCE_PROC_ADDR(mInstance, GetPhysicalDeviceSurfaceSupportKHR);
@@ -491,13 +499,13 @@ namespace bs { namespace ct
 		BS_INC_RENDER_STAT(NumClears);
 	}
 
-	void VulkanRenderAPI::setRenderTarget(const SPtr<RenderTarget>& target, bool readOnlyDepthStencil,
+	void VulkanRenderAPI::setRenderTarget(const SPtr<RenderTarget>& target, UINT32 readOnlyFlags,
 		RenderSurfaceMask loadMask, const SPtr<CommandBuffer>& commandBuffer)
 	{
 		VulkanCommandBuffer* cb = getCB(commandBuffer);
 		VulkanCmdBuffer* vkCB = cb->getInternal();
 
-		vkCB->setRenderTarget(target, readOnlyDepthStencil, loadMask);
+		vkCB->setRenderTarget(target, readOnlyFlags, loadMask);
 		
 		BS_INC_RENDER_STAT(NumRenderTargetChanges);
 	}
@@ -552,7 +560,11 @@ namespace bs { namespace ct
 
 	const RenderAPIInfo& VulkanRenderAPI::getAPIInfo() const
 	{
-		static RenderAPIInfo info(0.0f, 0.0f, 0.0f, 1.0f, VET_COLOR_ABGR, false, false, true, true, true);
+		static RenderAPIInfo info(0.0f, 0.0f, 0.0f, 1.0f, VET_COLOR_ABGR, 
+								  RenderAPIFeatureFlag::NDCYAxisDown |
+								  RenderAPIFeatureFlag::ColumnMajorMatrices |
+								  RenderAPIFeatureFlag::MultiThreadedCB |
+								  RenderAPIFeatureFlag::MSAAImageStores);
 
 		return info;
 	}

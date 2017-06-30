@@ -10,56 +10,28 @@
 #define USE_SKELETON
 #include "$EDITOR$\SelectionBase.bslinc"
 
-Technique 
- : inherits("Selection") =
-{
-	Language = "HLSL11";
+technique Selection1
+{ 
+	mixin Selection;
 };
 
-Technique 
- : inherits("SelectionSkinned") =
+technique Selection2
 {
-	Language = "HLSL11";
-	Tags = { "Skinned" };
+	mixin SelectionSkinned;
+
+	tags = { "Skinned" };
 };
 
-Technique 
- : inherits("SelectionMorph") =
+technique Selection3
 {
-	Language = "HLSL11";
-	Tags = { "Morph" };
+	mixin SelectionMorph;
+
+	tags = { "Morph" };
 };
 
-Technique 
- : inherits("SelectionSkinnedMorph") =
+technique Selection4
 {
-	Language = "HLSL11";
-	Tags = { "SkinnedMorph" };
-};
+	mixin SelectionSkinnedMorph;
 
-Technique 
- : inherits("Selection") =
-{
-	Language = "GLSL";
-};
-
-Technique 
- : inherits("SelectionSkinned") =
-{
-	Language = "GLSL";
-	Tags = { "Skinned" };
-};
-
-Technique 
- : inherits("SelectionMorph") =
-{
-	Language = "GLSL";
-	Tags = { "Morph" };
-};
-
-Technique 
- : inherits("SelectionSkinnedMorph") =
-{
-	Language = "GLSL";
-	Tags = { "SkinnedMorph" };
+	tags = { "SkinnedMorph" };
 };

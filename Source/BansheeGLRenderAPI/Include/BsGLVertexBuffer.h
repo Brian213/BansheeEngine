@@ -14,7 +14,7 @@ namespace bs { namespace ct
 	 */
 
 	/**	OpenGL implementation of a vertex buffer. */
-    class BS_RSGL_EXPORT GLVertexBuffer : public VertexBuffer
+    class GLVertexBuffer : public VertexBuffer
     {
     public:
 		GLVertexBuffer(const VERTEX_BUFFER_DESC& desc, GpuDeviceFlags deviceMask);
@@ -26,6 +26,10 @@ namespace bs { namespace ct
 		/** @copydoc VertexBuffer::writeData */
         void writeData(UINT32 offset, UINT32 length, const void* source, 
 			BufferWriteType writeFlags = BWT_NORMAL, UINT32 queueIdx = 0) override;
+
+		/** @copydoc IndexBuffer::copyData */
+		void copyData(HardwareBuffer& srcBuffer, UINT32 srcOffset, UINT32 dstOffset, UINT32 length, 
+			bool discardWholeBuffer = false, const SPtr<CommandBuffer>& commandBuffer = nullptr) override;
 
 		/**	Returns internal OpenGL buffer ID. */
         GLuint getGLBufferId() const { return mBuffer.getGLBufferId(); }

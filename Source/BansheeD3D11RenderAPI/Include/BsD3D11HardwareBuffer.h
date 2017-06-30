@@ -12,7 +12,7 @@ namespace bs { namespace ct
 	 */
 
 	/**	Class containing common functionality for all DirectX 11 hardware buffers. */
-	class BS_D3D11_EXPORT D3D11HardwareBuffer : public HardwareBuffer
+	class D3D11HardwareBuffer : public HardwareBuffer
 	{
 	public:
 		/**	Available types of DX11 buffers. */
@@ -33,7 +33,9 @@ namespace bs { namespace ct
 			/** Generic buffer that is used for holding parameters used for indirect rendering. */
 			BT_INDIRECTARGUMENT = BT_GROUP_GENERIC | 0x40, 
 			/** Generic buffer that allows the GPU program to use append/consume functionality. */
-			BT_APPENDCONSUME = BT_GROUP_GENERIC | 0x80 
+			BT_APPENDCONSUME = BT_GROUP_GENERIC | 0x80, 
+			/** Generic buffer that contains primitive types. */
+			BT_STANDARD = BT_GROUP_GENERIC | 0x100
 		};
 
 		D3D11HardwareBuffer(BufferType btype, GpuBufferUsage usage, UINT32 elementCount, UINT32 elementSize, 
@@ -50,7 +52,7 @@ namespace bs { namespace ct
 
 		/** @copydoc HardwareBuffer::copyData */
 		void copyData(HardwareBuffer& srcBuffer, UINT32 srcOffset, UINT32 dstOffset, 
-			UINT32 length, bool discardWholeBuffer = false, UINT32 queueIdx = 0) override;
+			UINT32 length, bool discardWholeBuffer = false, const SPtr<CommandBuffer>& commandBuffer = nullptr) override;
 
 		/**	Returns the internal DX11 buffer object. */
 		ID3D11Buffer* getD3DBuffer() const { return mD3DBuffer; }

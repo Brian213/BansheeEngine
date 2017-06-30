@@ -589,31 +589,31 @@ namespace bs
 		0, 0, 0, 0, 0, 0, 0, 0
 		},
 	//-----------------------------------------------------------------------
-        {"PF_FLOAT16_RGB",
-        /* Bytes per element */
-        6,
-        /* Flags */
-        PFF_FLOAT,
-        /* Component type and count */
-        PCT_FLOAT16, 3,
-        /* rbits, gbits, bbits, abits */
-        16, 16, 16, 0,
-        /* Masks and shifts */
-        0, 0, 0, 0, 0, 0, 0, 0
-        },
+		{ "PF_FLOAT16_RGB",
+		/* Bytes per element */
+		6,
+		/* Flags */
+		PFF_FLOAT,
+		/* Component type and count */
+		PCT_FLOAT16, 3,
+		/* rbits, gbits, bbits, abits */
+		16, 16, 16, 0,
+		/* Masks and shifts */
+		0, 0, 0, 0, 0, 0, 0, 0
+		},
 	//-----------------------------------------------------------------------
-        {"PF_FLOAT16_RGBA",
-        /* Bytes per element */
-        8,
-        /* Flags */
-        PFF_FLOAT | PFF_HASALPHA,
-        /* Component type and count */
-        PCT_FLOAT16, 4,
-        /* rbits, gbits, bbits, abits */
-        16, 16, 16, 16,
-        /* Masks and shifts */
-        0, 0, 0, 0, 0, 0, 0, 0
-        },
+		{ "PF_FLOAT16_RGBA",
+		/* Bytes per element */
+		8,
+		/* Flags */
+		PFF_FLOAT | PFF_HASALPHA,
+		/* Component type and count */
+		PCT_FLOAT16, 4,
+		/* rbits, gbits, bbits, abits */
+		16, 16, 16, 16,
+		/* Masks and shifts */
+		0, 0, 0, 0, 0, 0, 0, 0
+		},
 	//-----------------------------------------------------------------------
 		{"PF_FLOAT32_R",
 		/* Bytes per element */
@@ -641,31 +641,31 @@ namespace bs
 		0, 0, 0, 0, 0, 0, 0, 0
 		},
 	//-----------------------------------------------------------------------
-        {"PF_FLOAT32_RGB",
-        /* Bytes per element */
-        12,
-        /* Flags */
-        PFF_FLOAT,
-        /* Component type and count */
-        PCT_FLOAT32, 3,
-        /* rbits, gbits, bbits, abits */
-        32, 32, 32, 0,
-        /* Masks and shifts */
-        0, 0, 0, 0, 0, 0, 0, 0
-        },
+		{ "PF_FLOAT32_RGB",
+		/* Bytes per element */
+		12,
+		/* Flags */
+		PFF_FLOAT,
+		/* Component type and count */
+		PCT_FLOAT32, 3,
+		/* rbits, gbits, bbits, abits */
+		32, 32, 32, 0,
+		/* Masks and shifts */
+		0, 0, 0, 0, 0, 0, 0, 0
+		},
 	//-----------------------------------------------------------------------
-        {"PF_FLOAT32_RGBA",
-        /* Bytes per element */
-        16,
-        /* Flags */
-        PFF_FLOAT | PFF_HASALPHA,
-        /* Component type and count */
-        PCT_FLOAT32, 4,
-        /* rbits, gbits, bbits, abits */
-        32, 32, 32, 32,
-        /* Masks and shifts */
-        0, 0, 0, 0, 0, 0, 0, 0
-        },
+		{ "PF_FLOAT32_RGBA",
+		/* Bytes per element */
+		16,
+		/* Flags */
+		PFF_FLOAT | PFF_HASALPHA,
+		/* Component type and count */
+		PCT_FLOAT32, 4,
+		/* rbits, gbits, bbits, abits */
+		32, 32, 32, 32,
+		/* Masks and shifts */
+		0, 0, 0, 0, 0, 0, 0, 0
+		},
 	//-----------------------------------------------------------------------
 		{"PF_D32_S8X24",
 		/* Bytes per element */
@@ -746,15 +746,15 @@ namespace bs
 		0x000003FF, 0x000FFC00, 0x3FF00000, 0xC0000000,
 		0, 10, 20, 30
 		},
-    };
+	};
 
-    static inline const PixelFormatDescription &getDescriptionFor(const PixelFormat fmt)
-    {
-        const int ord = (int)fmt;
-        assert(ord>=0 && ord<PF_COUNT);
+	static inline const PixelFormatDescription &getDescriptionFor(const PixelFormat fmt)
+	{
+		const int ord = (int)fmt;
+		assert(ord >= 0 && ord < PF_COUNT);
 
-        return _pixelFormats[ord];
-    }
+		return _pixelFormats[ord];
+	}
 
 	/**	Handles compression output from NVTT library for a single image. */
 	struct NVTTCompressOutputHandler : public nvtt::OutputHandler
@@ -763,10 +763,10 @@ namespace bs
 			:buffer(buffer), bufferWritePos(buffer), bufferEnd(buffer + sizeBytes)
 		{ }
 
-		virtual void beginImage(int size, int width, int height, int depth, int face, int miplevel) override
+		void beginImage(int size, int width, int height, int depth, int face, int miplevel) override
 		{ }
 
-		virtual bool writeData(const void* data, int size) override
+		bool writeData(const void* data, int size) override
 		{
 			assert((bufferWritePos + size) <= bufferEnd);
 			memcpy(bufferWritePos, data, size);
@@ -774,6 +774,9 @@ namespace bs
 
 			return true;
 		}
+
+		void endImage() override
+		{ }
 
 		UINT8* buffer;
 		UINT8* bufferWritePos;
@@ -807,6 +810,9 @@ namespace bs
 			return true;
 		}
 
+		void endImage() override
+		{ }
+
 		Vector<SPtr<PixelData>> buffers;
 		SPtr<PixelData> activeBuffer;
 
@@ -830,6 +836,10 @@ namespace bs
 			return nvtt::Format_BC4;
 		case PF_BC5:
 			return nvtt::Format_BC5;
+		case PF_BC6H:
+			return nvtt::Format_BC6;
+		case PF_BC7:
+			return nvtt::Format_BC7;
 		default: // Unsupported format
 			return nvtt::Format_BC3;
 		}
@@ -885,10 +895,10 @@ namespace bs
 		return nvtt::WrapMode_Mirror;
 	}
 
-    UINT32 PixelUtil::getNumElemBytes(PixelFormat format)
-    {
-        return getDescriptionFor(format).elemBytes;
-    }
+	UINT32 PixelUtil::getNumElemBytes(PixelFormat format)
+	{
+		return getDescriptionFor(format).elemBytes;
+	}
 
 	UINT32 PixelUtil::getMemorySize(UINT32 width, UINT32 height, UINT32 depth, PixelFormat format)
 	{
@@ -964,40 +974,40 @@ namespace bs
 		}
 	}
 
-    UINT32 PixelUtil::getNumElemBits(PixelFormat format)
-    {
-        return getDescriptionFor(format).elemBytes * 8;
-    }
+	UINT32 PixelUtil::getNumElemBits(PixelFormat format)
+	{
+		return getDescriptionFor(format).elemBytes * 8;
+	}
 
-    UINT32 PixelUtil::getFlags(PixelFormat format)
-    {
-        return getDescriptionFor(format).flags;
-    }
+	UINT32 PixelUtil::getFlags(PixelFormat format)
+	{
+		return getDescriptionFor(format).flags;
+	}
 
-    bool PixelUtil::hasAlpha(PixelFormat format)
-    {
-        return (PixelUtil::getFlags(format) & PFF_HASALPHA) > 0;
-    }
+	bool PixelUtil::hasAlpha(PixelFormat format)
+	{
+		return (PixelUtil::getFlags(format) & PFF_HASALPHA) > 0;
+	}
 
-    bool PixelUtil::isFloatingPoint(PixelFormat format)
-    {
-        return (PixelUtil::getFlags(format) & PFF_FLOAT) > 0;
-    }
+	bool PixelUtil::isFloatingPoint(PixelFormat format)
+	{
+		return (PixelUtil::getFlags(format) & PFF_FLOAT) > 0;
+	}
 
-    bool PixelUtil::isCompressed(PixelFormat format)
-    {
-        return (PixelUtil::getFlags(format) & PFF_COMPRESSED) > 0;
-    }
+	bool PixelUtil::isCompressed(PixelFormat format)
+	{
+		return (PixelUtil::getFlags(format) & PFF_COMPRESSED) > 0;
+	}
 
-    bool PixelUtil::isDepth(PixelFormat format)
-    {
-        return (PixelUtil::getFlags(format) & PFF_DEPTH) > 0;
-    }
+	bool PixelUtil::isDepth(PixelFormat format)
+	{
+		return (PixelUtil::getFlags(format) & PFF_DEPTH) > 0;
+	}
 
-    bool PixelUtil::isNativeEndian(PixelFormat format)
-    {
-        return (PixelUtil::getFlags(format) & PFF_NATIVEENDIAN) > 0;
-    }
+	bool PixelUtil::isNativeEndian(PixelFormat format)
+	{
+		return (PixelUtil::getFlags(format) & PFF_NATIVEENDIAN) > 0;
+	}
 
 	bool PixelUtil::checkFormat(PixelFormat& format, TextureType texType, int usage)
 	{
@@ -1091,25 +1101,25 @@ namespace bs
 		}
 	}
 
-    void PixelUtil::getBitDepths(PixelFormat format, int (&rgba)[4])
-    {
-        const PixelFormatDescription& des = getDescriptionFor(format);
-        rgba[0] = des.rbits;
-        rgba[1] = des.gbits;
-        rgba[2] = des.bbits;
-        rgba[3] = des.abits;
-    }
+	void PixelUtil::getBitDepths(PixelFormat format, int(&rgba)[4])
+	{
+		const PixelFormatDescription& des = getDescriptionFor(format);
+		rgba[0] = des.rbits;
+		rgba[1] = des.gbits;
+		rgba[2] = des.bbits;
+		rgba[3] = des.abits;
+	}
 
-	void PixelUtil::getBitMasks(PixelFormat format, UINT32 (&rgba)[4])
-    {
-        const PixelFormatDescription& des = getDescriptionFor(format);
-        rgba[0] = des.rmask;
-        rgba[1] = des.gmask;
-        rgba[2] = des.bmask;
-        rgba[3] = des.amask;
-    }
+	void PixelUtil::getBitMasks(PixelFormat format, UINT32(&rgba)[4])
+	{
+		const PixelFormatDescription& des = getDescriptionFor(format);
+		rgba[0] = des.rmask;
+		rgba[1] = des.gmask;
+		rgba[2] = des.bmask;
+		rgba[3] = des.amask;
+	}
 
-	void PixelUtil::getBitShifts(PixelFormat format, UINT8 (&rgba)[4])
+	void PixelUtil::getBitShifts(PixelFormat format, UINT8(&rgba)[4])
 	{
 		const PixelFormatDescription& des = getDescriptionFor(format);
 		rgba[0] = des.rshift;
@@ -1118,252 +1128,262 @@ namespace bs
 		rgba[3] = des.ashift;
 	}
 
-    String PixelUtil::getFormatName(PixelFormat srcformat)
-    {
-        return getDescriptionFor(srcformat).name;
-    }
+	String PixelUtil::getFormatName(PixelFormat srcformat)
+	{
+		return getDescriptionFor(srcformat).name;
+	}
 
-    bool PixelUtil::isAccessible(PixelFormat srcformat)
-    {
-        if (srcformat == PF_UNKNOWN)
-            return false;
+	bool PixelUtil::isAccessible(PixelFormat srcformat)
+	{
+		if (srcformat == PF_UNKNOWN)
+			return false;
 
-        UINT32 flags = getFlags(srcformat);
-        return !((flags & PFF_COMPRESSED) || (flags & PFF_DEPTH));
-    }
+		UINT32 flags = getFlags(srcformat);
+		return !((flags & PFF_COMPRESSED) || (flags & PFF_DEPTH));
+	}
 
-    PixelComponentType PixelUtil::getElementType(PixelFormat format)
-    {
+	PixelComponentType PixelUtil::getElementType(PixelFormat format)
+	{
 		const PixelFormatDescription& des = getDescriptionFor(format);
-        return des.componentType;
-    }
+		return des.componentType;
+	}
 
 	UINT32 PixelUtil::getNumElements(PixelFormat format)
-    {
+	{
 		const PixelFormatDescription& des = getDescriptionFor(format);
-        return des.componentCount;
-    }
+		return des.componentCount;
+	}
 
 	UINT32 PixelUtil::getMaxMipmaps(UINT32 width, UINT32 height, UINT32 depth, PixelFormat format)
 	{
 		UINT32 count = 0;
-        if((width > 0) && (height > 0))
-        {
+		if ((width > 0) && (height > 0))
+		{
 			while (!(width == 1 && height == 1 && depth == 1))
-            { 
-                if(width>1)		width = width/2;
-                if(height>1)	height = height/2;
-                if(depth>1)		depth = depth/2;
-                    
-                count ++;
-            } 
-        }
+			{
+				if (width > 1)		width = width / 2;
+				if (height > 1)	height = height / 2;
+				if (depth > 1)		depth = depth / 2;
+
+				count++;
+			}
+		}
 
 		return count;
 	}
 
-    void PixelUtil::packColor(const Color& color, PixelFormat format, void* dest)
-    {
-        packColor(color.r, color.g, color.b, color.a, format, dest);
-    }
+	void PixelUtil::packColor(const Color& color, PixelFormat format, void* dest)
+	{
+		packColor(color.r, color.g, color.b, color.a, format, dest);
+	}
 
-    void PixelUtil::packColor(UINT8 r, UINT8 g, UINT8 b, UINT8 a, PixelFormat format,  void* dest)
-    {
-        const PixelFormatDescription &des = getDescriptionFor(format);
+	void PixelUtil::packColor(UINT8 r, UINT8 g, UINT8 b, UINT8 a, PixelFormat format, void* dest)
+	{
+		const PixelFormatDescription &des = getDescriptionFor(format);
 
-        if(des.flags & PFF_NATIVEENDIAN) 
+		if (des.flags & PFF_NATIVEENDIAN)
 		{
-            // Shortcut for integer formats packing
-            UINT32 value = ((Bitwise::fixedToFixed(r, 8, des.rbits)<<des.rshift) & des.rmask) |
-                ((Bitwise::fixedToFixed(g, 8, des.gbits)<<des.gshift) & des.gmask) |
-                ((Bitwise::fixedToFixed(b, 8, des.bbits)<<des.bshift) & des.bmask) |
-                ((Bitwise::fixedToFixed(a, 8, des.abits)<<des.ashift) & des.amask);
+			// Shortcut for integer formats packing
+			UINT32 value = ((Bitwise::fixedToFixed(r, 8, des.rbits) << des.rshift) & des.rmask) |
+				((Bitwise::fixedToFixed(g, 8, des.gbits) << des.gshift) & des.gmask) |
+				((Bitwise::fixedToFixed(b, 8, des.bbits) << des.bshift) & des.bmask) |
+				((Bitwise::fixedToFixed(a, 8, des.abits) << des.ashift) & des.amask);
 
-            // And write to memory
-            Bitwise::intWrite(dest, des.elemBytes, value);
-        } 
-		else 
+			// And write to memory
+			Bitwise::intWrite(dest, des.elemBytes, value);
+		}
+		else
 		{
-            // Convert to float
-            packColor((float)r/255.0f,(float)g/255.0f,(float)b/255.0f,(float)a/255.0f, format, dest);
-        }
-    }
+			// Convert to float
+			packColor((float)r / 255.0f, (float)g / 255.0f, (float)b / 255.0f, (float)a / 255.0f, format, dest);
+		}
+	}
 
-    void PixelUtil::packColor(float r, float g, float b, float a, const PixelFormat format, void* dest)
-    {
-        const PixelFormatDescription& des = getDescriptionFor(format);
+	void PixelUtil::packColor(float r, float g, float b, float a, const PixelFormat format, void* dest)
+	{
+		const PixelFormatDescription& des = getDescriptionFor(format);
 
-        if(des.flags & PFF_NATIVEENDIAN) 
+		if (des.flags & PFF_NATIVEENDIAN)
 		{
-            // Do the packing
-            const unsigned int value = ((Bitwise::floatToFixed(r, des.rbits)<<des.rshift) & des.rmask) |
-                ((Bitwise::floatToFixed(g, des.gbits)<<des.gshift) & des.gmask) |
-                ((Bitwise::floatToFixed(b, des.bbits)<<des.bshift) & des.bmask) |
-                ((Bitwise::floatToFixed(a, des.abits)<<des.ashift) & des.amask);
+			// Do the packing
+			const unsigned int value = ((Bitwise::floatToFixed(r, des.rbits) << des.rshift) & des.rmask) |
+				((Bitwise::floatToFixed(g, des.gbits) << des.gshift) & des.gmask) |
+				((Bitwise::floatToFixed(b, des.bbits) << des.bshift) & des.bmask) |
+				((Bitwise::floatToFixed(a, des.abits) << des.ashift) & des.amask);
 
-            // And write to memory
-            Bitwise::intWrite(dest, des.elemBytes, value);
-        }
-		else 
+			// And write to memory
+			Bitwise::intWrite(dest, des.elemBytes, value);
+		}
+		else
 		{
-            switch(format)
-            {
-            case PF_FLOAT32_R:
-                ((float*)dest)[0] = r;
-                break;
+			switch (format)
+			{
+			case PF_FLOAT32_R:
+				((float*)dest)[0] = r;
+				break;
 			case PF_FLOAT32_RG:
 				((float*)dest)[0] = r;
 				((float*)dest)[1] = g;
 				break;
-            case PF_FLOAT32_RGB:
-                ((float*)dest)[0] = r;
-                ((float*)dest)[1] = g;
-                ((float*)dest)[2] = b;
-                break;
-            case PF_FLOAT32_RGBA:
-                ((float*)dest)[0] = r;
-                ((float*)dest)[1] = g;
-                ((float*)dest)[2] = b;
-                ((float*)dest)[3] = a;
-                break;
-            case PF_FLOAT16_R:
-                ((UINT16*)dest)[0] = Bitwise::floatToHalf(r);
-                break;
+			case PF_FLOAT32_RGB:
+				((float*)dest)[0] = r;
+				((float*)dest)[1] = g;
+				((float*)dest)[2] = b;
+				break;
+			case PF_FLOAT32_RGBA:
+				((float*)dest)[0] = r;
+				((float*)dest)[1] = g;
+				((float*)dest)[2] = b;
+				((float*)dest)[3] = a;
+				break;
+			case PF_FLOAT16_R:
+				((UINT16*)dest)[0] = Bitwise::floatToHalf(r);
+				break;
 			case PF_FLOAT16_RG:
 				((UINT16*)dest)[0] = Bitwise::floatToHalf(r);
 				((UINT16*)dest)[1] = Bitwise::floatToHalf(g);
 				break;
-            case PF_FLOAT16_RGB:
-                ((UINT16*)dest)[0] = Bitwise::floatToHalf(r);
-                ((UINT16*)dest)[1] = Bitwise::floatToHalf(g);
-                ((UINT16*)dest)[2] = Bitwise::floatToHalf(b);
-                break;
-            case PF_FLOAT16_RGBA:
-                ((UINT16*)dest)[0] = Bitwise::floatToHalf(r);
-                ((UINT16*)dest)[1] = Bitwise::floatToHalf(g);
-                ((UINT16*)dest)[2] = Bitwise::floatToHalf(b);
-                ((UINT16*)dest)[3] = Bitwise::floatToHalf(a);
-                break;
+			case PF_FLOAT16_RGB:
+				((UINT16*)dest)[0] = Bitwise::floatToHalf(r);
+				((UINT16*)dest)[1] = Bitwise::floatToHalf(g);
+				((UINT16*)dest)[2] = Bitwise::floatToHalf(b);
+				break;
+			case PF_FLOAT16_RGBA:
+				((UINT16*)dest)[0] = Bitwise::floatToHalf(r);
+				((UINT16*)dest)[1] = Bitwise::floatToHalf(g);
+				((UINT16*)dest)[2] = Bitwise::floatToHalf(b);
+				((UINT16*)dest)[3] = Bitwise::floatToHalf(a);
+				break;
 			case PF_R8G8:
 				((UINT8*)dest)[0] = (UINT8)Bitwise::floatToFixed(r, 8);
-                ((UINT8*)dest)[1] = (UINT8)Bitwise::floatToFixed(g, 8);
+				((UINT8*)dest)[1] = (UINT8)Bitwise::floatToFixed(g, 8);
 				break;
 			case PF_R8:
 				((UINT8*)dest)[0] = (UINT8)Bitwise::floatToFixed(r, 8);
 				break;
-            default:
-                LOGERR("Pack to " + getFormatName(format) + " not implemented");
-                break;
-            }
-        }
-    }
-    void PixelUtil::unpackColor(Color* color, PixelFormat format, const void* src)
-    {
+			case PF_FLOAT_R11G11B10:
+			{
+				UINT32 value;
+				value = Bitwise::floatToFloat11(r);
+				value |= Bitwise::floatToFloat11(g) << 11;
+				value |= Bitwise::floatToFloat10(b) << 22;
+
+				((UINT32*)dest)[0] = value;
+			}
+			break;
+			default:
+				LOGERR("Pack to " + getFormatName(format) + " not implemented");
+				break;
+			}
+		}
+	}
+	void PixelUtil::unpackColor(Color* color, PixelFormat format, const void* src)
+	{
 		unpackColor(&color->r, &color->g, &color->b, &color->a, format, src);
-    }
+	}
 
-    void PixelUtil::unpackColor(UINT8* r, UINT8* g, UINT8* b, UINT8* a, PixelFormat format, const void* src)
-    {
-        const PixelFormatDescription &des = getDescriptionFor(format);
+	void PixelUtil::unpackColor(UINT8* r, UINT8* g, UINT8* b, UINT8* a, PixelFormat format, const void* src)
+	{
+		const PixelFormatDescription &des = getDescriptionFor(format);
 
-        if(des.flags & PFF_NATIVEENDIAN) 
+		if (des.flags & PFF_NATIVEENDIAN)
 		{
-            // Shortcut for integer formats unpacking
-            const UINT32 value = Bitwise::intRead(src, des.elemBytes);
+			// Shortcut for integer formats unpacking
+			const UINT32 value = Bitwise::intRead(src, des.elemBytes);
 
-            *r = (UINT8)Bitwise::fixedToFixed((value & des.rmask)>>des.rshift, des.rbits, 8);
-            *g = (UINT8)Bitwise::fixedToFixed((value & des.gmask)>>des.gshift, des.gbits, 8);
-            *b = (UINT8)Bitwise::fixedToFixed((value & des.bmask)>>des.bshift, des.bbits, 8);
+			*r = (UINT8)Bitwise::fixedToFixed((value & des.rmask) >> des.rshift, des.rbits, 8);
+			*g = (UINT8)Bitwise::fixedToFixed((value & des.gmask) >> des.gshift, des.gbits, 8);
+			*b = (UINT8)Bitwise::fixedToFixed((value & des.bmask) >> des.bshift, des.bbits, 8);
 
-            if(des.flags & PFF_HASALPHA)
-            {
-                *a = (UINT8)Bitwise::fixedToFixed((value & des.amask)>>des.ashift, des.abits, 8);
-            }
-            else
-            {
-                *a = 255; // No alpha, default a component to full
-            }
-        } 
-		else 
+			if (des.flags & PFF_HASALPHA)
+			{
+				*a = (UINT8)Bitwise::fixedToFixed((value & des.amask) >> des.ashift, des.abits, 8);
+			}
+			else
+			{
+				*a = 255; // No alpha, default a component to full
+			}
+		}
+		else
 		{
-            // Do the operation with the more generic floating point
-            float rr, gg, bb, aa;
-            unpackColor(&rr,&gg,&bb,&aa, format, src);
+			// Do the operation with the more generic floating point
+			float rr, gg, bb, aa;
+			unpackColor(&rr, &gg, &bb, &aa, format, src);
 
-            *r = (UINT8)Bitwise::floatToFixed(rr, 8);
-            *g = (UINT8)Bitwise::floatToFixed(gg, 8);
-            *b = (UINT8)Bitwise::floatToFixed(bb, 8);
-            *a = (UINT8)Bitwise::floatToFixed(aa, 8);
-        }
-    }
+			*r = (UINT8)Bitwise::floatToFixed(rr, 8);
+			*g = (UINT8)Bitwise::floatToFixed(gg, 8);
+			*b = (UINT8)Bitwise::floatToFixed(bb, 8);
+			*a = (UINT8)Bitwise::floatToFixed(aa, 8);
+		}
+	}
 
-    void PixelUtil::unpackColor(float* r, float* g, float* b, float* a, PixelFormat format, const void* src)
-    {
-        const PixelFormatDescription &des = getDescriptionFor(format);
-        if(des.flags & PFF_NATIVEENDIAN) 
+	void PixelUtil::unpackColor(float* r, float* g, float* b, float* a, PixelFormat format, const void* src)
+	{
+		const PixelFormatDescription &des = getDescriptionFor(format);
+		if (des.flags & PFF_NATIVEENDIAN)
 		{
-            // Shortcut for integer formats unpacking
-            const unsigned int value = Bitwise::intRead(src, des.elemBytes);
+			// Shortcut for integer formats unpacking
+			const unsigned int value = Bitwise::intRead(src, des.elemBytes);
 
-			*r = Bitwise::fixedToFloat((value & des.rmask)>>des.rshift, des.rbits);
-			*g = Bitwise::fixedToFloat((value & des.gmask)>>des.gshift, des.gbits);
-			*b = Bitwise::fixedToFloat((value & des.bmask)>>des.bshift, des.bbits);
+			*r = Bitwise::fixedToFloat((value & des.rmask) >> des.rshift, des.rbits);
+			*g = Bitwise::fixedToFloat((value & des.gmask) >> des.gshift, des.gbits);
+			*b = Bitwise::fixedToFloat((value & des.bmask) >> des.bshift, des.bbits);
 
-            if(des.flags & PFF_HASALPHA)
-            {
-                *a = Bitwise::fixedToFloat((value & des.amask)>>des.ashift, des.abits);
-            }
-            else
-            {
-                *a = 1.0f; // No alpha, default a component to full
-            }
-        } 
-		else 
+			if (des.flags & PFF_HASALPHA)
+			{
+				*a = Bitwise::fixedToFloat((value & des.amask) >> des.ashift, des.abits);
+			}
+			else
+			{
+				*a = 1.0f; // No alpha, default a component to full
+			}
+		}
+		else
 		{
-            switch(format)
-            {
-            case PF_FLOAT32_R:
-                *r = *g = *b = ((float*)src)[0];
-                *a = 1.0f;
-                break;
+			switch (format)
+			{
+			case PF_FLOAT32_R:
+				*r = *g = *b = ((float*)src)[0];
+				*a = 1.0f;
+				break;
 			case PF_FLOAT32_RG:
 				*r = ((float*)src)[0];
 				*g = *b = ((float*)src)[1];
 				*a = 1.0f;
 				break;
-            case PF_FLOAT32_RGB:
-                *r = ((float*)src)[0];
-                *g = ((float*)src)[1];
-                *b = ((float*)src)[2];
-                *a = 1.0f;
-                break;
-            case PF_FLOAT32_RGBA:
-                *r = ((float*)src)[0];
-                *g = ((float*)src)[1];
-                *b = ((float*)src)[2];
-                *a = ((float*)src)[3];
-                break;
-            case PF_FLOAT16_R:
-                *r = *g = *b = Bitwise::halfToFloat(((UINT16*)src)[0]);
-                *a = 1.0f;
-                break;
+			case PF_FLOAT32_RGB:
+				*r = ((float*)src)[0];
+				*g = ((float*)src)[1];
+				*b = ((float*)src)[2];
+				*a = 1.0f;
+				break;
+			case PF_FLOAT32_RGBA:
+				*r = ((float*)src)[0];
+				*g = ((float*)src)[1];
+				*b = ((float*)src)[2];
+				*a = ((float*)src)[3];
+				break;
+			case PF_FLOAT16_R:
+				*r = *g = *b = Bitwise::halfToFloat(((UINT16*)src)[0]);
+				*a = 1.0f;
+				break;
 			case PF_FLOAT16_RG:
 				*r = Bitwise::halfToFloat(((UINT16*)src)[0]);
 				*g = *b = Bitwise::halfToFloat(((UINT16*)src)[1]);
 				*a = 1.0f;
 				break;
-            case PF_FLOAT16_RGB:
-                *r = Bitwise::halfToFloat(((UINT16*)src)[0]);
-                *g = Bitwise::halfToFloat(((UINT16*)src)[1]);
-                *b = Bitwise::halfToFloat(((UINT16*)src)[2]);
-                *a = 1.0f;
-                break;
-            case PF_FLOAT16_RGBA:
-                *r = Bitwise::halfToFloat(((UINT16*)src)[0]);
-                *g = Bitwise::halfToFloat(((UINT16*)src)[1]);
-                *b = Bitwise::halfToFloat(((UINT16*)src)[2]);
-                *a = Bitwise::halfToFloat(((UINT16*)src)[3]);
-                break;
+			case PF_FLOAT16_RGB:
+				*r = Bitwise::halfToFloat(((UINT16*)src)[0]);
+				*g = Bitwise::halfToFloat(((UINT16*)src)[1]);
+				*b = Bitwise::halfToFloat(((UINT16*)src)[2]);
+				*a = 1.0f;
+				break;
+			case PF_FLOAT16_RGBA:
+				*r = Bitwise::halfToFloat(((UINT16*)src)[0]);
+				*g = Bitwise::halfToFloat(((UINT16*)src)[1]);
+				*b = Bitwise::halfToFloat(((UINT16*)src)[2]);
+				*a = Bitwise::halfToFloat(((UINT16*)src)[3]);
+				break;
 			case PF_R8G8:
 				*r = Bitwise::fixedToFloat(((UINT8*)src)[0], 8);
 				*g = Bitwise::fixedToFloat(((UINT8*)src)[1], 8);
@@ -1376,12 +1396,20 @@ namespace bs
 				*b = 0.0f;
 				*a = 1.0f;
 				break;
-            default:
-                LOGERR("Unpack from " + getFormatName(format) + " not implemented");
-                break;
-            }
-        }
-    }
+			case PF_FLOAT_R11G11B10:
+			{
+				UINT32 value = ((UINT32*)src)[0];
+				*r = Bitwise::float11ToFloat(value);
+				*g = Bitwise::float11ToFloat(value >> 11);
+				*b = Bitwise::float10ToFloat(value >> 22);
+			}
+			break;
+			default:
+				LOGERR("Unpack from " + getFormatName(format) + " not implemented");
+				break;
+			}
+		}
+	}
 
 	void PixelUtil::packDepth(float depth, const PixelFormat format, void* dest)
 	{
@@ -1427,16 +1455,16 @@ namespace bs
 		}
 	}
 
-    void PixelUtil::bulkPixelConversion(const PixelData &src, PixelData &dst)
-    {
-        assert(src.getWidth() == dst.getWidth() &&
-			   src.getHeight() == dst.getHeight() &&
-			   src.getDepth() == dst.getDepth());
+	void PixelUtil::bulkPixelConversion(const PixelData &src, PixelData &dst)
+	{
+		assert(src.getWidth() == dst.getWidth() &&
+			src.getHeight() == dst.getHeight() &&
+			src.getDepth() == dst.getDepth());
 
 		// Check for compressed formats, we don't support decompression
-		if(PixelUtil::isCompressed(src.getFormat()))
+		if (PixelUtil::isCompressed(src.getFormat()))
 		{
-			if(src.getFormat() == dst.getFormat())
+			if (src.getFormat() == dst.getFormat())
 			{
 				memcpy(dst.getData(), src.getData(), src.getConsecutiveSize());
 				return;
@@ -1466,85 +1494,197 @@ namespace bs
 			}
 		}
 
-        // The easy case
-        if(src.getFormat() == dst.getFormat()) 
+		// The easy case
+		if (src.getFormat() == dst.getFormat())
 		{
-            // Everything consecutive?
-            if(src.isConsecutive() && dst.isConsecutive())
-            {
+			// Everything consecutive?
+			if (src.isConsecutive() && dst.isConsecutive())
+			{
 				memcpy(dst.getData(), src.getData(), src.getConsecutiveSize());
-                return;
-            }
+				return;
+			}
 
 			const UINT32 srcPixelSize = PixelUtil::getNumElemBytes(src.getFormat());
 			const UINT32 dstPixelSize = PixelUtil::getNumElemBytes(dst.getFormat());
-            UINT8 *srcptr = static_cast<UINT8*>(src.getData())
-                + (src.getLeft() + src.getTop() * src.getRowPitch() + src.getFront() * src.getSlicePitch()) * srcPixelSize;
-            UINT8 *dstptr = static_cast<UINT8*>(dst.getData())
+			UINT8 *srcptr = static_cast<UINT8*>(src.getData())
+				+ (src.getLeft() + src.getTop() * src.getRowPitch() + src.getFront() * src.getSlicePitch()) * srcPixelSize;
+			UINT8 *dstptr = static_cast<UINT8*>(dst.getData())
 				+ (dst.getLeft() + dst.getTop() * dst.getRowPitch() + dst.getFront() * dst.getSlicePitch()) * dstPixelSize;
 
-            // Calculate pitches+skips in bytes
+			// Calculate pitches+skips in bytes
 			const UINT32 srcRowPitchBytes = src.getRowPitch()*srcPixelSize;
 			const UINT32 srcSliceSkipBytes = src.getSliceSkip()*srcPixelSize;
 
 			const UINT32 dstRowPitchBytes = dst.getRowPitch()*dstPixelSize;
 			const UINT32 dstSliceSkipBytes = dst.getSliceSkip()*dstPixelSize;
 
-            // Otherwise, copy per row
+			// Otherwise, copy per row
 			const UINT32 rowSize = src.getWidth()*srcPixelSize;
 			for (UINT32 z = src.getFront(); z < src.getBack(); z++)
-            {
-                for(UINT32 y = src.getTop(); y < src.getBottom(); y++)
-                {
+			{
+				for (UINT32 y = src.getTop(); y < src.getBottom(); y++)
+				{
 					memcpy(dstptr, srcptr, rowSize);
 
-                    srcptr += srcRowPitchBytes;
-                    dstptr += dstRowPitchBytes;
-                }
+					srcptr += srcRowPitchBytes;
+					dstptr += dstRowPitchBytes;
+				}
 
-                srcptr += srcSliceSkipBytes;
-                dstptr += dstSliceSkipBytes;
-            }
+				srcptr += srcSliceSkipBytes;
+				dstptr += dstSliceSkipBytes;
+			}
 
-            return;
-        }
+			return;
+		}
 
-		const UINT32 srcPixelSize = PixelUtil::getNumElemBytes(src.getFormat());
-		const UINT32 dstPixelSize = PixelUtil::getNumElemBytes(dst.getFormat());
-        UINT8 *srcptr = static_cast<UINT8*>(src.getData())
-            + (src.getLeft() + src.getTop() * src.getRowPitch() + src.getFront() * src.getSlicePitch()) * srcPixelSize;
-        UINT8 *dstptr = static_cast<UINT8*>(dst.getData())
-            + (dst.getLeft() + dst.getTop() * dst.getRowPitch() + dst.getFront() * dst.getSlicePitch()) * dstPixelSize;
-		
-        // Calculate pitches+skips in bytes
-		const UINT32 srcRowSkipBytes = src.getRowSkip()*srcPixelSize;
-		const UINT32 srcSliceSkipBytes = src.getSliceSkip()*srcPixelSize;
-		const UINT32 dstRowSkipBytes = dst.getRowSkip()*dstPixelSize;
-		const UINT32 dstSliceSkipBytes = dst.getSliceSkip()*dstPixelSize;
+		UINT32 srcPixelSize = PixelUtil::getNumElemBytes(src.getFormat());
+		UINT32 dstPixelSize = PixelUtil::getNumElemBytes(dst.getFormat());
+		UINT8 *srcptr = static_cast<UINT8*>(src.getData())
+			+ (src.getLeft() + src.getTop() * src.getRowPitch() + src.getFront() * src.getSlicePitch()) * srcPixelSize;
+		UINT8 *dstptr = static_cast<UINT8*>(dst.getData())
+			+ (dst.getLeft() + dst.getTop() * dst.getRowPitch() + dst.getFront() * dst.getSlicePitch()) * dstPixelSize;
 
-        // The brute force fallback
-        float r,g,b,a;
-		for (UINT32 z = src.getFront(); z<src.getBack(); z++)
+		// Calculate pitches+skips in bytes
+		UINT32 srcRowSkipBytes = src.getRowSkip()*srcPixelSize;
+		UINT32 srcSliceSkipBytes = src.getSliceSkip()*srcPixelSize;
+		UINT32 dstRowSkipBytes = dst.getRowSkip()*dstPixelSize;
+		UINT32 dstSliceSkipBytes = dst.getSliceSkip()*dstPixelSize;
+
+		// The brute force fallback
+		float r, g, b, a;
+		for (UINT32 z = src.getFront(); z < src.getBack(); z++)
 		{
 			for (UINT32 y = src.getTop(); y < src.getBottom(); y++)
-            {
-				for (UINT32 x = src.getLeft(); x<src.getRight(); x++)
-                {
-                    unpackColor(&r, &g, &b, &a, src.getFormat(), srcptr);
-                    packColor(r, g, b, a, dst.getFormat(), dstptr);
+			{
+				for (UINT32 x = src.getLeft(); x < src.getRight(); x++)
+				{
+					unpackColor(&r, &g, &b, &a, src.getFormat(), srcptr);
+					packColor(r, g, b, a, dst.getFormat(), dstptr);
 
-                    srcptr += srcPixelSize;
-                    dstptr += dstPixelSize;
-                }
+					srcptr += srcPixelSize;
+					dstptr += dstPixelSize;
+				}
 
-                srcptr += srcRowSkipBytes;
-                dstptr += dstRowSkipBytes;
-            }
+				srcptr += srcRowSkipBytes;
+				dstptr += dstRowSkipBytes;
+			}
 
-            srcptr += srcSliceSkipBytes;
-            dstptr += dstSliceSkipBytes;
-        }
-    }
+			srcptr += srcSliceSkipBytes;
+			dstptr += dstSliceSkipBytes;
+		}
+	}
+
+	void PixelUtil::flipComponentOrder(PixelData& data)
+	{
+		if (isCompressed(data.getFormat()))
+		{
+			LOGERR("flipComponentOrder() not supported on compressed images.");
+			return;
+		}
+
+		const PixelFormatDescription& pfd = getDescriptionFor(data.getFormat());
+		if (pfd.componentCount <= 1) // Nothing to flip
+			return;
+
+		bool bitCountMismatch = false;
+		if (pfd.rbits != pfd.gbits)
+			bitCountMismatch = true;
+		
+		if(pfd.componentCount > 2 && pfd.rbits != pfd.bbits)
+			bitCountMismatch = true;
+
+		if (pfd.componentCount > 3 && pfd.rbits != pfd.abits)
+			bitCountMismatch = true;
+
+		if(bitCountMismatch)
+		{
+			LOGERR("flipComponentOrder() not supported for formats that don't have the same number of bytes for all components.");
+			return;
+		}
+
+		struct CompData
+		{
+			UINT32 mask;
+			UINT8 shift;
+		};
+
+		std::array<CompData, 4> compData =
+		{{
+			{ pfd.rmask, pfd.rshift },
+			{ pfd.gmask, pfd.gshift },
+			{ pfd.bmask, pfd.bshift },
+			{ pfd.amask, pfd.ashift }
+		}};
+
+		// Ensure unused components are at the end, after sort
+		if (pfd.componentCount < 4)
+			compData[4].shift = 0xFF;
+
+		if (pfd.componentCount < 3)
+			compData[3].shift = 0xFF;
+
+		std::sort(compData.begin(), compData.end(), 
+			[&](const CompData& lhs, const CompData& rhs) { return lhs.shift < rhs.shift; }
+		);
+
+		UINT8* dataPtr = data.getData();
+
+		UINT32 pixelSize = pfd.elemBytes;
+		UINT32 rowSkipBytes = data.getRowSkip()*pixelSize;
+		UINT32 sliceSkipBytes = data.getSliceSkip()*pixelSize;
+
+		for (UINT32 z = 0; z < data.getDepth(); z++)
+		{
+			for (UINT32 y = 0; y < data.getHeight(); y++)
+			{
+				for (UINT32 x = 0; x < data.getWidth(); x++)
+				{
+					if(pfd.componentCount == 2)
+					{
+						UINT64 pixelData = 0;
+						memcpy(&pixelData, dataPtr, pixelSize);
+
+						UINT64 output = 0;
+						output |= (pixelData & compData[1].mask) >> compData[1].shift;
+						output |= (pixelData & compData[0].mask) << compData[1].shift;
+
+						memcpy(dataPtr, &output, pixelSize);
+					}
+					else if(pfd.componentCount == 3)
+					{
+						UINT64 pixelData = 0;
+						memcpy(&pixelData, dataPtr, pixelSize);
+
+						UINT64 output = 0;
+						output |= (pixelData & compData[2].mask) >> compData[2].shift;
+						output |= (pixelData & compData[0].mask) << compData[2].shift;
+
+						memcpy(dataPtr, &output, pixelSize);
+					}
+					else if(pfd.componentCount == 4)
+					{
+						UINT64 pixelData = 0;
+						memcpy(&pixelData, dataPtr, pixelSize);
+
+						UINT64 output = 0;
+						output |= (pixelData & compData[3].mask) >> compData[3].shift;
+						output |= (pixelData & compData[0].mask) << compData[3].shift;
+
+						output |= (pixelData & compData[2].mask) >> (compData[2].shift - compData[1].shift);
+						output |= (pixelData & compData[1].mask) << (compData[2].shift - compData[1].shift);
+
+						memcpy(dataPtr, &output, pixelSize);
+					}
+
+					dataPtr += pixelSize;
+				}
+
+				dataPtr += rowSkipBytes;
+			}
+
+			dataPtr += sliceSkipBytes;
+		}
+	}
 
 	void PixelUtil::scale(const PixelData& src, PixelData& scaled, Filter filter)
 	{
@@ -1828,13 +1968,6 @@ namespace bs
 			return;
 		}
 
-		// Note: NVTT site has implementations for these two formats for when I decide to add them
-		if (options.format == PF_BC6H || options.format == PF_BC7)
-		{
-			LOGERR("Compression failed. BC6H and BC7 formats are currently not supported.")
-			return;
-		}
-
 		if (src.getDepth() != 1)
 		{
 			LOGERR("Compression failed. 3D texture compression not supported.")
@@ -1847,26 +1980,37 @@ namespace bs
 			return;
 		}
 
-		PixelData bgraData(src.getWidth(), src.getHeight(), 1, PF_R8G8B8A8);
-		bgraData.allocateInternalBuffer();
-		bulkPixelConversion(src, bgraData);
+		PixelFormat interimFormat = options.format == PF_BC6H ? PF_FLOAT32_RGBA : PF_B8G8R8A8;
+
+		PixelData interimData(src.getWidth(), src.getHeight(), 1, interimFormat);
+		interimData.allocateInternalBuffer();
+		bulkPixelConversion(src, interimData);
+
+		if(interimFormat != PF_FLOAT32_RGBA)
+			flipComponentOrder(interimData);
 
 		nvtt::InputOptions io;
 		io.setTextureLayout(nvtt::TextureType_2D, src.getWidth(), src.getHeight());
-		io.setMipmapData(bgraData.getData(), src.getWidth(), src.getHeight());
 		io.setMipmapGeneration(false);
 		io.setAlphaMode(toNVTTAlphaMode(options.alphaMode));
 		io.setNormalMap(options.isNormalMap);
+
+		if (interimFormat == PF_FLOAT32_RGBA)
+			io.setFormat(nvtt::InputFormat_RGBA_32F);
+		else
+			io.setFormat(nvtt::InputFormat_BGRA_8UB);
 
 		if (options.isSRGB)
 			io.setGamma(2.2f, 2.2f);
 		else
 			io.setGamma(1.0f, 1.0f);
 
+		io.setMipmapData(interimData.getData(), src.getWidth(), src.getHeight());
+
 		nvtt::CompressionOptions co;
 		co.setFormat(toNVTTFormat(options.format));
 		co.setQuality(toNVTTQuality(options.quality));
-		
+
 		NVTTCompressOutputHandler outputHandler(dst.getData(), dst.getConsecutiveSize());
 
 		nvtt::OutputOptions oo;
@@ -1891,11 +2035,9 @@ namespace bs
 			return outputMipBuffers;
 		}
 
-		// Note: Add support for floating point mips, no reason they shouldn't be supported other than
-		// nvtt doesn't support them natively
-		if (isCompressed(src.getFormat()) || isFloatingPoint(src.getFormat()))
+		if (isCompressed(src.getFormat()))
 		{
-			LOGERR("Mipmap generation failed. Source data cannot be compressed or in floating point format.")
+			LOGERR("Mipmap generation failed. Source data cannot be compressed.")
 			return outputMipBuffers;
 		}
 
@@ -1905,21 +2047,48 @@ namespace bs
 			return outputMipBuffers;
 		}
 
-		PixelData rgbaData(src.getWidth(), src.getHeight(), 1, PF_R8G8B8A8);
-		rgbaData.allocateInternalBuffer();
-		bulkPixelConversion(src, rgbaData);
+		PixelFormat interimFormat = isFloatingPoint(src.getFormat()) ? PF_FLOAT32_RGBA : PF_B8G8R8A8;
+
+		PixelData interimData(src.getWidth(), src.getHeight(), 1, interimFormat);
+		interimData.allocateInternalBuffer();
+		bulkPixelConversion(src, interimData);
+		
+		if (interimFormat != PF_FLOAT32_RGBA)
+			flipComponentOrder(interimData);
 
 		nvtt::InputOptions io;
 		io.setTextureLayout(nvtt::TextureType_2D, src.getWidth(), src.getHeight());
-		io.setMipmapData(rgbaData.getData(), src.getWidth(), src.getHeight());
 		io.setMipmapGeneration(true);
 		io.setNormalMap(options.isNormalMap);
 		io.setNormalizeMipmaps(options.normalizeMipmaps);
 		io.setWrapMode(toNVTTWrapMode(options.wrapMode));
 
+		if (interimFormat == PF_FLOAT32_RGBA)
+			io.setFormat(nvtt::InputFormat_RGBA_32F);
+		else
+			io.setFormat(nvtt::InputFormat_BGRA_8UB);
+
+		if (options.isSRGB)
+			io.setGamma(2.2f, 2.2f);
+		else
+			io.setGamma(1.0f, 1.0f);
+
+		io.setMipmapData(interimData.getData(), src.getWidth(), src.getHeight());
+
 		nvtt::CompressionOptions co;
 		co.setFormat(nvtt::Format_RGBA);
 		
+		if (interimFormat == PF_FLOAT32_RGBA)
+		{
+			co.setPixelType(nvtt::PixelType_Float);
+			co.setPixelFormat(32, 32, 32, 32);
+		}
+		else
+		{
+			co.setPixelType(nvtt::PixelType_UnsignedNorm);
+			co.setPixelFormat(32, 0x0000FF00, 0x00FF0000, 0xFF000000, 0x000000FF);
+		}
+
 		UINT32 numMips = getMaxMipmaps(src.getWidth(), src.getHeight(), 1, src.getFormat());
 
 		Vector<SPtr<PixelData>> rgbaMipBuffers;
@@ -1931,7 +2100,7 @@ namespace bs
 		UINT32 curHeight = src.getHeight();
 		for (UINT32 i = 0; i < numMips; i++)
 		{
-			rgbaMipBuffers.push_back(bs_shared_ptr_new<PixelData>(curWidth, curHeight, 1, PF_R8G8B8A8));
+			rgbaMipBuffers.push_back(bs_shared_ptr_new<PixelData>(curWidth, curHeight, 1, interimFormat));
 			rgbaMipBuffers.back()->allocateInternalBuffer();
 
 			if (curWidth > 1) 
@@ -1941,7 +2110,7 @@ namespace bs
 				curHeight = curHeight / 2;
 		}
 
-		rgbaMipBuffers.push_back(bs_shared_ptr_new<PixelData>(curWidth, curHeight, 1, PF_R8G8B8A8));
+		rgbaMipBuffers.push_back(bs_shared_ptr_new<PixelData>(curWidth, curHeight, 1, interimFormat));
 		rgbaMipBuffers.back()->allocateInternalBuffer();
 
 		NVTTMipmapOutputHandler outputHandler(rgbaMipBuffers);
@@ -1957,7 +2126,7 @@ namespace bs
 			return outputMipBuffers;
 		}
 
-		rgbaData.freeInternalBuffer();
+		interimData.freeInternalBuffer();
 
 		for (UINT32 i = 0; i < (UINT32)rgbaMipBuffers.size(); i++)
 		{

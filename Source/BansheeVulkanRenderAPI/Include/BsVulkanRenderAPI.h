@@ -45,7 +45,7 @@ namespace bs { namespace ct
 			UINT8 targetMask = 0xFF, const SPtr<CommandBuffer>& commandBuffer = nullptr) override;
 
 		/** @copydoc RenderAPI::setRenderTarget */
-		void setRenderTarget(const SPtr<RenderTarget>& target, bool readOnlyDepthStencil = false,
+		void setRenderTarget(const SPtr<RenderTarget>& target, UINT32 readOnlyFlags = 0,
 			RenderSurfaceMask loadMask = RT_NONE, const SPtr<CommandBuffer>& commandBuffer = nullptr) override;
 
 		/** @copydoc RenderAPI::setViewport */
@@ -92,7 +92,7 @@ namespace bs { namespace ct
 		/** @copydoc RenderAPI::addCommands() */
 		void addCommands(const SPtr<CommandBuffer>& commandBuffer, const SPtr<CommandBuffer>& secondary) override;
 
-		/** @copydoc RenderAPI::executeCommands() */
+		/** @copydoc RenderAPI::submitCommandBuffer() */
 		void submitCommandBuffer(const SPtr<CommandBuffer>& commandBuffer, UINT32 syncMask = 0xFFFFFFFF) override;
 
 		/** @copydoc RenderAPI::convertProjectionMatrix */
@@ -134,7 +134,7 @@ namespace bs { namespace ct
 	protected:
 		friend class VulkanRenderAPIFactory;
 
-		/** @copydoc RenderAPI::initializePrepare */
+		/** @copydoc RenderAPI::initialize */
 		void initialize() override;
 
 		/** @copydoc RenderAPI::destroyCore */

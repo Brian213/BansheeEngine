@@ -418,13 +418,6 @@ namespace bs
 				continue;
 			}
 
-			if (findIter->second->arraySize != iter->second.arraySize)
-			{
-				LOGWRN("Ignoring shader parameter \"" + iter->first + "\". Array size doesn't match the one defined in the gpu program."
-					+ "Shader defined array size: " + toString(iter->second.arraySize) + " - Gpu program defined array size: " + toString(findIter->second->arraySize));
-				continue;
-			}
-
 			auto findBlockIter = paramToParamBlockMap.find(iter->second.gpuVariableName);
 
 			if (findBlockIter == paramToParamBlockMap.end())
@@ -444,7 +437,7 @@ namespace bs
 				{
 					for (auto iter3 = validObjectParameters.begin(); iter3 != validObjectParameters.end(); ++iter3)
 					{
-						if ((*iter3)->name == (*iter2) && (*iter3)->type == iter->second.type)
+						if ((*iter3)->name == (*iter2))
 						{
 							ValidParamKey key(*iter2, paramType);
 							validParams.insert(std::make_pair(key, iter->first));
@@ -897,7 +890,7 @@ namespace bs
 
 			UINT8* data = params->getData(materialParamInfo->index);
 
-			bool transposeMatrices = ct::RenderAPI::instance().getAPIInfo().getGpuProgramHasColumnMajorMatrices();
+			bool transposeMatrices = ct::RenderAPI::instance().getAPIInfo().isFlagSet(RenderAPIFeatureFlag::ColumnMajorMatrices);
 			if (transposeMatrices)
 			{
 				auto writeTransposed = [&](auto& temp)

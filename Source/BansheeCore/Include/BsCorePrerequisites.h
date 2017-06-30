@@ -179,40 +179,33 @@
 /** Maximum number of devices one resource can exist at the same time. */
 #define BS_MAX_LINKED_DEVICES 4U
 
-// Windows Settings
-#if BS_PLATFORM == BS_PLATFORM_WIN32
-
-// If we're not including this from a client build, specify that the stuff
-// should get exported. Otherwise, import it.
-#	if defined(BS_STATIC_LIB)
-// Linux compilers don't have symbol import/export directives.
-#   	define BS_CORE_EXPORT
-#   else
-#   	if defined(BS_CORE_EXPORTS)
-#       	define BS_CORE_EXPORT __declspec( dllexport )
-#   	else
-#           if defined( __MINGW32__ )
-#               define BS_CORE_EXPORT
-#           else
-#       	    define BS_CORE_EXPORT __declspec( dllimport )
-#           endif
-#   	endif
-#	endif
-
-#endif
-
-// Linux/Apple Settings
-#if BS_PLATFORM == BS_PLATFORM_LINUX || BS_PLATFORM == BS_PLATFORM_OSX
-
-// Enable GCC symbol visibility
-#   if defined( BS_GCC_VISIBILITY )
-#       define BS_CORE_EXPORT  __attribute__ ((visibility("default")))
-#       define BS_HIDDEN __attribute__ ((visibility("hidden")))
-#   else
-#       define BS_CORE_EXPORT
-#       define BS_HIDDEN
-#   endif
-
+// DLL export
+#if BS_PLATFORM == BS_PLATFORM_WIN32 // Windows
+#  if BS_COMPILER == BS_COMPILER_MSVC
+#    if defined(BS_STATIC_LIB)
+#      define BS_CORE_EXPORT
+#    else
+#      if defined(BS_CORE_EXPORTS)
+#        define BS_CORE_EXPORT __declspec(dllexport)
+#      else
+#        define BS_CORE_EXPORT __declspec(dllimport)
+#      endif
+#	 endif
+#  else
+#    if defined(BS_STATIC_LIB)
+#      define BS_CORE_EXPORT
+#    else
+#      if defined(BS_CORE_EXPORTS)
+#        define BS_CORE_EXPORT __attribute__ ((dllexport))
+#      else
+#        define BS_CORE_EXPORT __attribute__ ((dllimport))
+#      endif
+#	 endif
+#  endif
+#  define BS_CORE_HIDDEN
+#else // Linux/Mac settings
+#  define BS_CORE_EXPORT __attribute__ ((visibility ("default")))
+#  define BS_CORE_HIDDEN __attribute__ ((visibility ("hidden")))
 #endif
 
 #include "BsHString.h"
@@ -332,6 +325,10 @@ namespace bs
 	class AudioClipImportOptions;
 	class AnimationClip;
 	class CCamera;
+	class CRenderable;
+	class CLight;
+	class CAnimation;
+	class CBone;
 	class GpuPipelineParamInfo;
 	class MaterialParams;
 	template <class T> class TAnimationCurve;
@@ -340,11 +337,15 @@ namespace bs
 	class Animation;
 	class GpuParamsSet;
 	class Camera;
+	class Renderable;
 	class MorphShapes;
 	class MorphShape;
 	class MorphChannel;
 	class GraphicsPipelineState;
 	class ComputePipelineState;
+	class ReflectionProbe;
+    class CReflectionProbe;
+    class CSkybox;
 	// Asset import
 	class SpecificImporter;
 	class Importer;
@@ -398,7 +399,7 @@ namespace bs
 
 	namespace ct
 	{
-		class CoreRenderer;
+		class Renderer;
 		class VertexData;
 		class SamplerState;
 		class IndexBuffer;
@@ -412,6 +413,7 @@ namespace bs
 		class BlendState;
 		class CoreObject;
 		class Camera;
+		class Renderable;
 		class MeshBase;
 		class Mesh;
 		class TransientMesh;
@@ -444,6 +446,8 @@ namespace bs
 		class RenderWindowManager;
 		class RenderStateManager;
 		class HardwareBufferManager;
+		class ReflectionProbe;
+        class Skybox;
 	}
 }
 
@@ -562,10 +566,19 @@ namespace bs
 		TID_MorphShape = 1128,
 		TID_MorphShapes = 1129,
 		TID_MorphChannel = 1130,
+		TID_ReflectionProbe = 1131,
+		TID_CReflectionProbe = 1132,
+		TID_CachedTextureData = 1133,
+        TID_Skybox = 1134,
+        TID_CSkybox = 1135,
 
 		// Moved from Engine layer
 		TID_CCamera = 30000,
 		TID_Camera = 30003,
+		TID_CRenderable = 30001,
+		TID_Renderable = 30004,
+		TID_Light = 30011,
+		TID_CLight = 30012,
 	};
 }
 
@@ -611,6 +624,10 @@ namespace bs
 	typedef GameObjectHandle<SceneObject> HSceneObject;
 	typedef GameObjectHandle<Component> HComponent;
 	typedef GameObjectHandle<CCamera> HCamera;
+	typedef GameObjectHandle<CRenderable> HRenderable;
+	typedef GameObjectHandle<CLight> HLight;
+	typedef GameObjectHandle<CAnimation> HAnimation;
+	typedef GameObjectHandle<CBone> HBone;
 	typedef GameObjectHandle<CRigidbody> HRigidbody;
 	typedef GameObjectHandle<CCollider> HCollider;
 	typedef GameObjectHandle<CBoxCollider> HBoxCollider;
@@ -625,6 +642,8 @@ namespace bs
 	typedef GameObjectHandle<CFixedJoint> HFixedJoint;
 	typedef GameObjectHandle<CD6Joint> HD6Joint;
 	typedef GameObjectHandle<CCharacterController> HCharacterController;
+    typedef GameObjectHandle<CReflectionProbe> HReflectionProbe;
+    typedef GameObjectHandle<CSkybox> HSkybox;
 
 	/** @} */
 }

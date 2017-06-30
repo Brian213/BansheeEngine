@@ -1,9 +1,12 @@
-cmake_minimum_required (VERSION 3.6.1)
+cmake_minimum_required (VERSION 3.7.2)
 project (Banshee)
 
 # Version
 set (BS_VERSION_MAJOR 0)
 set (BS_VERSION_MINOR 4)
+
+set (BS_PREBUILT_DEPENDENCIES_VERSION 2)
+set (BS_SRC_DEPENDENCIES_VERSION 12)
 
 # Configuration types
 if(CMAKE_CONFIGURATION_TYPES) # Multiconfig generator?
@@ -48,6 +51,8 @@ set_property(CACHE BUILD_SCOPE PROPERTY STRINGS "Runtime" "Framework")
 
 set(INCLUDE_ALL_IN_WORKFLOW OFF CACHE BOOL "If true, all libraries (even those not selected) will be included in the generated workflow (e.g. Visual Studio solution). This is useful when working on engine internals with a need for easy access to all parts of it. Only relevant for workflow generators like Visual Studio or XCode.")
 
+set(GENERATE_SCRIPT_BINDINGS ON CACHE BOOL "If true, script binding files will be generated. Script bindings are required for the project to build properly, however they take a while to generate. If you are sure the script bindings are up to date, you can turn off their generation (temporarily) to speed up the build.")
+
 if(BUILD_SCOPE MATCHES "Runtime")
 	set(BUILD_EDITOR ON)
 else()
@@ -56,7 +61,35 @@ endif()
 
 mark_as_advanced(CMAKE_INSTALL_PREFIX)
 
-# External code
+# Ensure dependencies are up to date
+## Check prebuilt dependencies that user downloads in a .zip
+set(BUILTIN_DEP_VERSION_FILE ${PROJECT_SOURCE_DIR}/../Dependencies/.version)
+if(NOT EXISTS ${BUILTIN_DEP_VERSION_FILE})
+	message(FATAL_ERROR "Precompiled dependencies package is missing our out of date. Re-run setup or manually download the latest dependencies package.")
+else()
+	file (STRINGS ${BUILTIN_DEP_VERSION_FILE} CURRENT_BUILTIN_DEP_VERSION)
+	if(${BS_PREBUILT_DEPENDENCIES_VERSION} GREATER ${CURRENT_BUILTIN_DEP_VERSION})
+		message(FATAL_ERROR "Your precomiled dependencies package is out of date. Re-run setup or manually download the latest dependencies package.")
+	endif()
+endif()
+	
+## Check dependencies built from source
+set(SOURCE_DEP_BUILD_DIR ${PROJECT_SOURCE_DIR}/../Dependencies/Build)
+set(SOURCE_DEP_BUILD_VERSION_FILE ${SOURCE_DEP_BUILD_DIR}/.version)
+if(EXISTS ${SOURCE_DEP_BUILD_VERSION_FILE})
+	file (STRINGS ${SOURCE_DEP_BUILD_VERSION_FILE} CURRENT_SOURCE_DEP_VERSION)
+	if(${BS_SRC_DEPENDENCIES_VERSION} GREATER ${CURRENT_SOURCE_DEP_VERSION})
+		message(STATUS "Built dependencies are out of date, forcing recompile.")
+		execute_process(COMMAND "${CMAKE_COMMAND}" 
+			-E remove_directory "${SOURCE_DEP_BUILD_DIR}")	
+	endif()
+else()
+	message(STATUS "Built dependencies are out of date, forcing recompile.")
+	execute_process(COMMAND "${CMAKE_COMMAND}" 
+		-E remove_directory "${SOURCE_DEP_BUILD_DIR}")	
+endif()
+
+# Includes required for various find_package calls
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/CMake/Modules/")
 
 # Global compile & linker flags
@@ -90,7 +123,7 @@ if(MSVC)
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE ${BS_LINKER_FLAGS_RELEASE})
 	
 	# Compiler
-	set(BS_COMPILER_FLAGS_COMMON "/GS- /W3 /GR- /WX- /nologo /bigobj /wd\"4577\"")
+	set(BS_COMPILER_FLAGS_COMMON "/GS- /W3 /GR- /WX- /nologo /bigobj /wd\"4577\" /wd\"4530\"")
 	set(CMAKE_CXX_FLAGS "/DWIN32 /D_WINDOWS")
 	
 	set(CMAKE_CXX_FLAGS_DEBUG "${BS_COMPILER_FLAGS_COMMON} /Gm /Od /RTC1 /MDd")
@@ -105,7 +138,7 @@ if(MSVC)
 	set(CMAKE_CXX_FLAGS_RELEASE "${BS_COMPILER_FLAGS_COMMON} /GL /Gy /O2 /Oi /MD")
 	
 	# Global defines
-	add_definitions(-D_HAS_EXCEPTIONS=0)
+	#add_definitions(-D_HAS_EXCEPTIONS=0)
 	
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 	# Note: Optionally add -ffunction-sections, -fdata-sections, but with linker option --gc-sections
@@ -128,8 +161,6 @@ else()
 endif()
 
 # Output
-set(CMAKE_BINARY_DIR "${PROJECT_SOURCE_DIR}/../Build/${CMAKE_GENERATOR}/")
-
 if(BS_64BIT)
 	set(BS_OUTPUT_DIR_PREFIX x64)
 else()
@@ -157,44 +188,45 @@ else()
 	set(BS_LIBRARY_EXTENSION ".a")
 endif()
 
-function(add_library_per_config target_name lib_name release_name debug_name)
-	add_library(${lib_name} STATIC IMPORTED)
-	set_target_properties(${lib_name} PROPERTIES IMPORTED_LOCATION_DEBUG ${PROJECT_SOURCE_DIR}/../Dependencies/${lib_name}/lib/${BS_OUTPUT_DIR_PREFIX}/${debug_name}${BS_LIBRARY_EXTENSION})
-	set_target_properties(${lib_name} PROPERTIES IMPORTED_LOCATION_OPTIMIZEDDEBUG ${PROJECT_SOURCE_DIR}/../Dependencies/${lib_name}/lib/${BS_OUTPUT_DIR_PREFIX}/${release_name}${BS_LIBRARY_EXTENSION})
-	set_target_properties(${lib_name} PROPERTIES IMPORTED_LOCATION_RELEASE ${PROJECT_SOURCE_DIR}/../Dependencies/${lib_name}/lib/${BS_OUTPUT_DIR_PREFIX}/${release_name}${BS_LIBRARY_EXTENSION})	
-	
-	target_link_libraries(${target_name} PRIVATE ${lib_name})	
-endfunction()
-
-function(add_library_per_config_multi target_name lib_name file_name release_name debug_name)
-	add_library(${lib_name} STATIC IMPORTED)
-	set_target_properties(${lib_name} PROPERTIES IMPORTED_LOCATION_DEBUG ${PROJECT_SOURCE_DIR}/../Dependencies/${file_name}/lib/${BS_OUTPUT_DIR_PREFIX}/${debug_name}${BS_LIBRARY_EXTENSION})
-	set_target_properties(${lib_name} PROPERTIES IMPORTED_LOCATION_OPTIMIZEDDEBUG ${PROJECT_SOURCE_DIR}/../Dependencies/${file_name}/lib/${BS_OUTPUT_DIR_PREFIX}/${release_name}${BS_LIBRARY_EXTENSION})
-	set_target_properties(${lib_name} PROPERTIES IMPORTED_LOCATION_RELEASE ${PROJECT_SOURCE_DIR}/../Dependencies/${file_name}/lib/${BS_OUTPUT_DIR_PREFIX}/${release_name}${BS_LIBRARY_EXTENSION})	
-	
-	target_link_libraries(${target_name} PRIVATE ${lib_name})	
-endfunction()
-
-function(add_engine_dependencies target_name)
-	if(RENDER_API_MODULE MATCHES "DirectX 11")
-		add_dependencies(${target_name} BansheeD3D11RenderAPI)
-	elseif(RENDER_API_MODULE MATCHES "Vulkan")
-		add_dependencies(${target_name} BansheeVulkanRenderAPI)
-	else()
-		add_dependencies(${target_name} BansheeGLRenderAPI)
-	endif()
-
-	if(AUDIO_MODULE MATCHES "FMOD")
-		add_dependencies(${target_name} BansheeFMOD)
-	else() # Default to OpenAudio
-		add_dependencies(${target_name} BansheeOpenAudio)
-	endif()
-	
-	add_dependencies(${target_name} BansheeMono BansheeSL BansheeOISInput BansheePhysX RenderBeast SBansheeEngine)
-endfunction()
+include(CMake/Common.cmake)
+include(CMake/FindPackageOrBuild.cmake)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS TRUE)
 
+# Config file
+## Note: Must happen before script binding generation
+## Set names of libraries used in the config file
+if(RENDER_API_MODULE MATCHES "DirectX 11")
+	set(RENDER_API_MODULE_LIB BansheeD3D11RenderAPI)
+elseif(RENDER_API_MODULE MATCHES "Vulkan")
+	set(RENDER_API_MODULE_LIB BansheeVulkanRenderAPI)
+else()
+	set(RENDER_API_MODULE_LIB BansheeGLRenderAPI)
+endif()
+
+if(AUDIO_MODULE MATCHES "FMOD")
+	set(AUDIO_MODULE_LIB BansheeFMOD)
+else() # Default to OpenAudio
+	set(AUDIO_MODULE_LIB BansheeOpenAudio)
+endif()
+
+set(RENDERER_MODULE_LIB RenderBeast)
+set(INPUT_MODULE_LIB BansheeOISInput)
+set(PHYSICS_MODULE_LIB BansheePhysX)
+
+if(BUILD_EDITOR)
+	set(BS_EDITOR_BUILD 1)
+else()
+	set(BS_EDITOR_BUILD 0)
+endif()
+
+## Generate config files)
+configure_file("${PROJECT_SOURCE_DIR}/CMake/BsEngineConfig.h.in" "${PROJECT_SOURCE_DIR}/BansheeEngine/Include/BsEngineConfig.h")
+configure_file("${PROJECT_SOURCE_DIR}/CMake/BsFrameworkConfig.h.in" "${PROJECT_SOURCE_DIR}/BansheeUtility/Include/BsFrameworkConfig.h")
+
+# Code generation for script bindings
+include(CMake/GenerateScriptBindings.cmake)
+	
 # Sub-directories
 ## Layers
 add_subdirectory(BansheeUtility)
@@ -246,13 +278,18 @@ if(BUILD_EDITOR OR (INCLUDE_ALL_IN_WORKFLOW AND MSVC))
 endif()
 
 ## Executables
-add_subdirectory(ExampleProject)
-add_subdirectory(ExampleLowLevelRendering)
+add_subdirectory(Examples/ExampleGettingStarted)
+add_subdirectory(Examples/ExampleLowLevelRendering)
+add_subdirectory(Examples/ExamplePhysicallyBasedShading)
 
 if(BUILD_EDITOR OR (INCLUDE_ALL_IN_WORKFLOW AND MSVC))
 	add_subdirectory(BansheeEditorExec)
 	add_subdirectory(Game)
 endif()
+
+## Local experimental projects (not part of main repository)
+add_subdirectory_optional(Experimental/PBS)
+add_subdirectory_optional(Experimental/Shadows)
 
 ## Managed projects
 if(MSVC)
@@ -271,33 +308,3 @@ if(MSVC)
 else()
 # TODO - Use Mono compiler to build the managed code as a pre-build step
 endif()
-
-# Config file
-## Set names of libraries used in the config file
-if(RENDER_API_MODULE MATCHES "DirectX 11")
-	set(RENDER_API_MODULE_LIB BansheeD3D11RenderAPI)
-elseif(RENDER_API_MODULE MATCHES "Vulkan")
-	set(RENDER_API_MODULE_LIB BansheeVulkanRenderAPI)
-else()
-	set(RENDER_API_MODULE_LIB BansheeGLRenderAPI)
-endif()
-
-if(AUDIO_MODULE MATCHES "FMOD")
-	set(AUDIO_MODULE_LIB BansheeFMOD)
-else() # Default to OpenAudio
-	set(AUDIO_MODULE_LIB BansheeOpenAudio)
-endif()
-
-set(RENDERER_MODULE_LIB RenderBeast)
-set(INPUT_MODULE_LIB BansheeOISInput)
-set(PHYSICS_MODULE_LIB BansheePhysX)
-
-if(BUILD_EDITOR)
-	set(BS_EDITOR_BUILD 1)
-else()
-	set(BS_EDITOR_BUILD 0)
-endif()
-
-## Generate config files
-configure_file("${PROJECT_SOURCE_DIR}/CMake/BsEngineConfig.h.in" "${PROJECT_SOURCE_DIR}/BansheeEngine/Include/BsEngineConfig.h")
-configure_file("${PROJECT_SOURCE_DIR}/CMake/BsFrameworkConfig.h.in" "${PROJECT_SOURCE_DIR}/BansheeUtility/Include/BsFrameworkConfig.h")

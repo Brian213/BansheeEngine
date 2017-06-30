@@ -2,7 +2,7 @@
 //**************** Copyright (c) 2016 Marko Pintera (marko.pintera@gmail.com). All rights reserved. **********************//
 #include "BsSceneObject.h"
 #include "BsComponent.h"
-#include "BsCoreSceneManager.h"
+#include "BsSceneManager.h"
 #include "BsException.h"
 #include "BsDebug.h"
 #include "BsSceneObjectRTTI.h"
@@ -19,6 +19,7 @@ namespace bs
 		, mScale(Vector3::ONE), mWorldPosition(Vector3::ZERO), mWorldRotation(Quaternion::IDENTITY)
 		, mWorldScale(Vector3::ONE), mCachedLocalTfrm(Matrix4::IDENTITY), mCachedWorldTfrm(Matrix4::IDENTITY)
 		, mDirtyFlags(0xFFFFFFFF), mDirtyHash(0), mActiveSelf(true), mActiveHierarchy(true)
+		, mMobility(ObjectMobility::Movable)
 	{
 		setName(name);
 	}
@@ -37,7 +38,7 @@ namespace bs
 		HSceneObject newObject = createInternal(name, flags);
 
 		if (newObject->isInstantiated())
-			gCoreSceneManager().registerNewSO(newObject);
+			gSceneManager().registerNewSO(newObject);
 
 		return newObject;
 	}
@@ -93,12 +94,7 @@ namespace bs
 				component->_setIsDestroyed();
 
 				if (isInstantiated())
-				{
-					if (getActive())
-						component->onDisabled();
-
-					component->onDestroyed();
-				}
+					gSceneManager()._notifyComponentDestroyed(component);
 
 				component->destroyInternal(component, true);
 				mComponents.erase(mComponents.end() - 1);
@@ -206,7 +202,7 @@ namespace bs
 			obj->mFlags &= ~SOF_DontInstantiate;
 
 			if (obj->mParent == nullptr)
-				gCoreSceneManager().registerNewSO(obj->mThisHandle);
+				gSceneManager().registerNewSO(obj->mThisHandle);
 
 			for (auto& component : obj->mComponents)
 				component->_instantiate();
@@ -221,12 +217,7 @@ namespace bs
 		std::function<void(SceneObject*)> triggerEventsRecursive = [&](SceneObject* obj)
 		{
 			for (auto& component : obj->mComponents)
-			{
-				component->onInitialized();
-
-				if (obj->getActive())
-					component->onEnabled();
-			}
+				gSceneManager()._notifyComponentCreated(component, obj->getActive());
 
 			for (auto& child : obj->mChildren)
 			{
@@ -245,24 +236,36 @@ namespace bs
 
 	void SceneObject::setPosition(const Vector3& position)
 	{
-		mPosition = position;
-		notifyTransformChanged(TCF_Transform);
+		if (mMobility == ObjectMobility::Movable)
+		{
+			mPosition = position;
+			notifyTransformChanged(TCF_Transform);
+		}
 	}
 
 	void SceneObject::setRotation(const Quaternion& rotation)
 	{
-		mRotation = rotation;
-		notifyTransformChanged(TCF_Transform);
+		if (mMobility == ObjectMobility::Movable)
+		{
+			mRotation = rotation;
+			notifyTransformChanged(TCF_Transform);
+		}
 	}
 
 	void SceneObject::setScale(const Vector3& scale)
 	{
-		mScale = scale;
-		notifyTransformChanged(TCF_Transform);
+		if (mMobility == ObjectMobility::Movable)
+		{
+			mScale = scale;
+			notifyTransformChanged(TCF_Transform);
+		}
 	}
 
 	void SceneObject::setWorldPosition(const Vector3& position)
 	{
+		if(mMobility != ObjectMobility::Movable)
+			return;
+
 		if (mParent != nullptr)
 		{
 			Vector3 invScale = mParent->getWorldScale();
@@ -282,6 +285,9 @@ namespace bs
 
 	void SceneObject::setWorldRotation(const Quaternion& rotation)
 	{
+		if (mMobility != ObjectMobility::Movable)
+			return;
+
 		if (mParent != nullptr)
 		{
 			Quaternion invRotation = mParent->getWorldRotation().inverse();
@@ -296,6 +302,9 @@ namespace bs
 
 	void SceneObject::setWorldScale(const Vector3& scale)
 	{
+		if (mMobility != ObjectMobility::Movable)
+			return;
+
 		if (mParent != nullptr)
 		{
 			Matrix3 rotScale;
@@ -443,22 +452,43 @@ namespace bs
 
 	void SceneObject::notifyTransformChanged(TransformChangedFlags flags) const
 	{
-		mDirtyFlags |= DirtyFlags::LocalTfrmDirty | DirtyFlags::WorldTfrmDirty;
-		mDirtyHash++;
-
-		for(auto& entry : mComponents)
+		// If object is immovable, don't send transform changed events nor mark the transform dirty
+		TransformChangedFlags componentFlags = flags;
+		if (mMobility != ObjectMobility::Movable)
+			componentFlags = (TransformChangedFlags)(componentFlags & ~TCF_Transform);
+		else
 		{
-			if (entry->supportsNotify(flags))
-				entry->onTransformChanged(flags);
+			mDirtyFlags |= DirtyFlags::LocalTfrmDirty | DirtyFlags::WorldTfrmDirty;
+			mDirtyHash++;
 		}
 
-		for (auto& entry : mChildren)
-			entry->notifyTransformChanged(flags);
+		// Only send component flags if we haven't removed them all
+		if (componentFlags != 0)
+		{
+			for (auto& entry : mComponents)
+			{
+				if (entry->supportsNotify(flags))
+				{
+					bool alwaysRun = entry->hasFlag(ComponentFlag::AlwaysRun);
+					if (alwaysRun || gSceneManager().isRunning())
+						entry->onTransformChanged(componentFlags);
+				}
+			}
+		}
+
+		// Mobility flag is only relevant for this scene object
+		flags = (TransformChangedFlags)(flags & ~TCF_Mobility);
+		if (flags != 0)
+		{
+			for (auto& entry : mChildren)
+				entry->notifyTransformChanged(flags);
+		}
 	}
 
 	void SceneObject::updateWorldTfrm() const
 	{
-		if(mParent != nullptr)
+		// Don't allow movement from parent when not movable
+		if (mParent != nullptr && mMobility == ObjectMobility::Movable)
 		{
 			// Update orientation
 			const Quaternion& parentOrientation = mParent->getWorldRotation();
@@ -665,12 +695,12 @@ namespace bs
 				if (activeHierarchy)
 				{
 					for (auto& component : mComponents)
-						component->onEnabled();
+						gSceneManager()._notifyComponentActivated(component, triggerEvents);
 				}
 				else
 				{
 					for (auto& component : mComponents)
-						component->onDisabled();
+						gSceneManager()._notifyComponentDeactivated(component, triggerEvents);
 				}
 			}
 		}
@@ -687,6 +717,20 @@ namespace bs
 			return mActiveSelf;
 		else
 			return mActiveHierarchy;
+	}
+
+	void SceneObject::setMobility(ObjectMobility mobility)
+	{
+		if(mMobility != mobility)
+		{
+			mMobility = mobility;
+
+			// If mobility changed to movable, update both the mobility flag and transform, otherwise just mobility
+			if (mMobility == ObjectMobility::Movable)
+				notifyTransformChanged((TransformChangedFlags)(TCF_Transform | TCF_Mobility));
+			else
+				notifyTransformChanged(TCF_Mobility);
+		}
 	}
 
 	HSceneObject SceneObject::clone(bool instantiate)
@@ -741,12 +785,7 @@ namespace bs
 			(*iter)->_setIsDestroyed();
 
 			if (isInstantiated())
-			{
-				if (getActive())
-					component->onDisabled();
-
-				(*iter)->onDestroyed();
-			}
+				gSceneManager()._notifyComponentDestroyed(*iter);
 			
 			(*iter)->destroyInternal(*iter, immediate);
 			mComponents.erase(iter);
@@ -772,6 +811,24 @@ namespace bs
 		}
 	}
 
+	HComponent SceneObject::addComponent(UINT32 typeId)
+	{
+		SPtr<IReflectable> newObj = rtti_create(typeId);
+
+		if(!rtti_is_subclass<Component>(newObj.get()))
+		{
+			LOGERR("Specified type is not a valid Component.");
+			return HComponent();
+		}
+
+		SPtr<Component> componentPtr = std::static_pointer_cast<Component>(newObj);
+		HComponent newComponent = GameObjectManager::instance().registerObject(componentPtr);
+		newComponent->mParent = mThisHandle;
+
+		addAndInitializeComponent(newComponent);
+		return newComponent;
+	}
+
 	void SceneObject::addComponentInternal(const SPtr<Component> component)
 	{
 		GameObjectHandle<Component> newComponent = GameObjectManager::instance().getObject(component->getInstanceId());
@@ -779,6 +836,27 @@ namespace bs
 		newComponent->mThisHandle = newComponent;
 
 		mComponents.push_back(newComponent);
+	}
+
+	void SceneObject::addAndInitializeComponent(const HComponent& component)
+	{
+		component->mThisHandle = component;
+		mComponents.push_back(component);
+
+		if (isInstantiated())
+		{
+			component->_instantiate();
+
+			gSceneManager()._notifyComponentCreated(component, getActive());
+		}
+	}
+
+	void SceneObject::addAndInitializeComponent(const SPtr<Component> component)
+	{
+		GameObjectHandle<Component> newComponent = GameObjectManager::instance().getObject(component->getInstanceId());
+		newComponent->mParent = mThisHandle;
+
+		addAndInitializeComponent(newComponent);
 	}
 
 	RTTITypeBase* SceneObject::getRTTIStatic()

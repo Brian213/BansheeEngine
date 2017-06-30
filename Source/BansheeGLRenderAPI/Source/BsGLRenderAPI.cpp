@@ -141,6 +141,15 @@ namespace bs { namespace ct
 		// Ensure cubemaps are filtered across seams
 		glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
+		GPUInfo gpuInfo;
+		gpuInfo.numGPUs = 1;
+
+		const char* vendor = (const char*)glGetString(GL_VENDOR);
+		const char* renderer = (const char*)glGetString(GL_RENDERER);
+		gpuInfo.names[0] = String(vendor) + " " + String(renderer);
+
+		PlatformUtility::_setGPUInfo(gpuInfo);
+
 		mGLInitialised = true;
 
 		RenderAPI::initializeWithWindow(primaryWindow);
@@ -427,6 +436,7 @@ namespace bs { namespace ct
 					textureUnits.clear();
 					imageUnits.clear();
 					uniformUnits.clear();
+					sharedStorageUnits.clear();
 
 					GpuProgramType type = (GpuProgramType)i;
 
@@ -448,15 +458,15 @@ namespace bs { namespace ct
 
 						if (glTex != nullptr)
 						{
-							GLenum newTextureType = glTex->getGLTextureTarget();
+							SPtr<TextureView> texView = glTex->requestView(surface.mipLevel, surface.numMipLevels, 
+								surface.arraySlice, surface.numArraySlices, GVU_DEFAULT);
+
+							GLTextureView* glTexView = static_cast<GLTextureView*>(texView.get());
+							GLenum newTextureType = glTexView->getGLTextureTarget();
 
 							if (mTextureInfos[unit].type != newTextureType)
 								glBindTexture(mTextureInfos[unit].type, 0);
 
-							SPtr<TextureView> texView = glTex->requestView(surface.mipLevel, surface.numMipLevels, 
-																surface.arraySlice, surface.numArraySlices, GVU_DEFAULT);
-
-							GLTextureView* glTexView = static_cast<GLTextureView*>(texView.get());
 							glBindTexture(newTextureType, glTexView->getGLID());
 							mTextureInfos[unit].type = newTextureType;
 
@@ -484,19 +494,27 @@ namespace bs { namespace ct
 						if (!activateGLTextureUnit(unit))
 							continue;
 
-						const SamplerProperties& stateProps = samplerState->getProperties();
+						bool isMultisample = mTextureInfos[unit].type == GL_TEXTURE_2D_MULTISAMPLE ||
+							mTextureInfos[unit].type == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
 
-						setTextureFiltering(unit, FT_MIN, stateProps.getTextureFiltering(FT_MIN));
-						setTextureFiltering(unit, FT_MAG, stateProps.getTextureFiltering(FT_MAG));
-						setTextureFiltering(unit, FT_MIP, stateProps.getTextureFiltering(FT_MIP));
+						// No sampler options for multisampled textures
+						if (!isMultisample)
+						{
+							const SamplerProperties& stateProps = samplerState->getProperties();
 
-						setTextureAnisotropy(unit, stateProps.getTextureAnisotropy());
-						setTextureMipmapBias(unit, stateProps.getTextureMipmapBias());
+							setTextureFiltering(unit, FT_MIN, stateProps.getTextureFiltering(FT_MIN));
+							setTextureFiltering(unit, FT_MAG, stateProps.getTextureFiltering(FT_MAG));
+							setTextureFiltering(unit, FT_MIP, stateProps.getTextureFiltering(FT_MIP));
 
-						const UVWAddressingMode& uvw = stateProps.getTextureAddressingMode();
-						setTextureAddressingMode(unit, uvw);
+							setTextureAnisotropy(unit, stateProps.getTextureAnisotropy());
+							setTextureCompareMode(unit, stateProps.getComparisonFunction());
+							setTextureMipmapBias(unit, stateProps.getTextureMipmapBias());
 
-						setTextureBorderColor(unit, stateProps.getBorderColor());
+							const UVWAddressingMode& uvw = stateProps.getTextureAddressingMode();
+							setTextureAddressingMode(unit, uvw);
+
+							setTextureBorderColor(unit, stateProps.getBorderColor());
+						}
 					}
 
 					for(auto& entry : paramDesc->buffers)
@@ -780,10 +798,10 @@ namespace bs { namespace ct
 		}
 	}
 
-	void GLRenderAPI::setRenderTarget(const SPtr<RenderTarget>& target, bool readOnlyDepthStencil, 
+	void GLRenderAPI::setRenderTarget(const SPtr<RenderTarget>& target, UINT32 readOnlyFlags, 
 		RenderSurfaceMask loadMask, const SPtr<CommandBuffer>& commandBuffer)
 	{
-		auto executeRef = [&](const SPtr<RenderTarget>& target, bool readOnlyDepthStencil)
+		auto executeRef = [&](const SPtr<RenderTarget>& target, UINT32 readOnlyFlags)
 		{
 			THROW_IF_NOT_CORE_THREAD;
 
@@ -823,10 +841,10 @@ namespace bs { namespace ct
 		};
 
 		if (commandBuffer == nullptr)
-			executeRef(target, readOnlyDepthStencil);
+			executeRef(target, readOnlyFlags);
 		else
 		{
-			auto execute = [=]() { executeRef(target, readOnlyDepthStencil); };
+			auto execute = [=]() { executeRef(target, readOnlyFlags); };
 
 			SPtr<GLCommandBuffer> cb = std::static_pointer_cast<GLCommandBuffer>(commandBuffer);
 			cb->queueCommand(execute);
@@ -1477,24 +1495,15 @@ namespace bs { namespace ct
 
 		const RenderTargetProperties& rtProps = mActiveRenderTarget->getProperties();
 
-		// If request texture flipping, use "upper-left", otherwise use "lower-left"
-		bool flipping = rtProps.requiresTextureFlipping();
-		//  GL measures from the bottom, not the top
-		UINT32 targetHeight = rtProps.getHeight();
 		// Calculate the "lower-left" corner of the viewport
 		GLsizei x = 0, y = 0, w = 0, h = 0;
 
 		if (enable)
 		{
 			glEnable(GL_SCISSOR_TEST);
-			// GL uses width / height rather than right / bottom
+
 			x = mScissorLeft;
-
-			if (flipping)
-				y = targetHeight - mScissorBottom;
-			else
-				y = mScissorTop;
-
+			y = mScissorTop;
 			w = mScissorRight - mScissorLeft;
 			h = mScissorBottom - mScissorTop;
 
@@ -1738,6 +1747,17 @@ namespace bs { namespace ct
 
 		if (getCurrentAnisotropy(unit) != maxAnisotropy)
 			glTexParameterf(mTextureInfos[unit].type, GL_TEXTURE_MAX_ANISOTROPY_EXT, (float)maxAnisotropy);
+	}
+
+	void GLRenderAPI::setTextureCompareMode(UINT16 unit, CompareFunction compare)
+	{
+		if (compare == CMPF_ALWAYS_PASS)
+			glTexParameteri(mTextureInfos[unit].type, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+		else
+		{
+			glTexParameteri(mTextureInfos[unit].type, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+			glTexParameteri(mTextureInfos[unit].type, GL_TEXTURE_COMPARE_FUNC, convertCompareFunction(compare));
+		}
 	}
 
 	bool GLRenderAPI::activateGLTextureUnit(UINT16 unit)
@@ -2256,12 +2276,6 @@ namespace bs { namespace ct
 		mViewportWidth = (UINT32)(rtProps.getWidth() * mViewportNorm.width);
 		mViewportHeight = (UINT32)(rtProps.getHeight() * mViewportNorm.height);
 
-		if (rtProps.requiresTextureFlipping())
-		{
-			// Convert "upper-left" corner to "lower-left"
-			mViewportTop = rtProps.getHeight() - (mViewportTop + mViewportHeight);
-		}
-
 		glViewport(mViewportLeft, mViewportTop, mViewportWidth, mViewportHeight);
 
 		// Configure the viewport clipping
@@ -2283,8 +2297,11 @@ namespace bs { namespace ct
 
 	const RenderAPIInfo& GLRenderAPI::getAPIInfo() const
 	{
-		static RenderAPIInfo info(0.0f, 0.0f, -1.0f, 1.0f, VET_COLOR_ABGR, false, true, false, true, false);
-
+		static RenderAPIInfo info(0.0f, 0.0f, -1.0f, 1.0f, VET_COLOR_ABGR,
+								  RenderAPIFeatureFlag::UVYAxisUp |
+								  RenderAPIFeatureFlag::ColumnMajorMatrices |
+								  RenderAPIFeatureFlag::MSAAImageStores);
+								  
 		return info;
 	}
 

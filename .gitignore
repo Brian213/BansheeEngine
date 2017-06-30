@@ -22,3 +22,6 @@ Build
 *.opendb
 BsEngineConfig.h
 BsFrameworkConfig.h
+Source/Experimental
+Source/MBansheeEngine/Generated
+Source/MBansheeEditor/Generated

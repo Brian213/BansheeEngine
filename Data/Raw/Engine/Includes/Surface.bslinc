@@ -1,61 +1,29 @@
-Technique 
- : inherits("BasePass")
- : inherits("Surface") =
+technique Surface1
 {
-	Language = "HLSL11";
+	mixin BasePass;
+	mixin Surface;
 };
 
-Technique 
- : inherits("BasePassSkinned")
- : inherits("Surface") =
+technique Surface2
 {
-	Language = "HLSL11";
-	Tags = { "Skinned" };
+	mixin BasePassSkinned;
+	mixin Surface;
+
+	tags = { "Skinned" };
 };
 
-Technique 
- : inherits("BasePassMorph")
- : inherits("Surface") =
+technique Surface3
 {
-	Language = "HLSL11";
-	Tags = { "Morph" };
+	mixin BasePassMorph;
+	mixin Surface;
+
+	tags = { "Morph" };
 };
 
-Technique 
- : inherits("BasePassSkinnedMorph")
- : inherits("Surface") =
+technique Surface4
 {
-	Language = "HLSL11";
-	Tags = { "SkinnedMorph" };
-};
+	mixin BasePassSkinnedMorph;
+	mixin Surface;
 
-Technique 
- : inherits("BasePass")
- : inherits("Surface") =
-{
-	Language = "GLSL";
-};
-
-Technique 
- : inherits("BasePassSkinned")
- : inherits("Surface") =
-{
-	Language = "GLSL";
-	Tags = { "Skinned" };
-};
-
-Technique 
- : inherits("BasePassMorph")
- : inherits("Surface") =
-{
-	Language = "GLSL";
-	Tags = { "Morph" };
-};
-
-Technique 
- : inherits("BasePassSkinnedMorph")
- : inherits("Surface") =
-{
-	Language = "GLSL";
-	Tags = { "SkinnedMorph" };
+	tags = { "SkinnedMorph" };
 };

@@ -8,6 +8,8 @@
 
 namespace bs
 {
+	struct BuiltinComponentInfo;
+
 	/** @addtogroup SBansheeEngine
 	 *  @{
 	 */
@@ -45,6 +47,36 @@ namespace bs
 		/**	Generates or retrieves a type info object for the specified managed class, if the class is serializable. */
 		SPtr<ManagedSerializableTypeInfo> getTypeInfo(MonoClass* monoClass);
 
+		/** 
+		 * Maps a mono type to information about a wrapped built-in component. Returns null if type doesn't correspond to
+		 * a builtin component. 
+		 */
+		BuiltinComponentInfo* getBuiltinComponentInfo(::MonoReflectionType* type);
+
+		/** 
+		 * Maps a type id to information about a wrapped built-in component. Returns null if type id doesn't correspond to
+		 * a builtin component. 
+		 */
+		BuiltinComponentInfo* getBuiltinComponentInfo(UINT32 rttiTypeId);
+
+		/** 
+		 * Maps a mono type to information about a wrapped built-in resource. Returns null if type doesn't correspond to
+		 * a builtin resource. 
+		 */
+		BuiltinResourceInfo* getBuiltinResourceInfo(::MonoReflectionType* type);
+
+		/** 
+		 * Maps a type id to information about a wrapped built-in resource. Returns null if type id doesn't correspond to
+		 * a builtin resource. 
+		 */
+		BuiltinResourceInfo* getBuiltinResourceInfo(UINT32 rttiTypeId);
+
+		/** 
+		 * Maps a resource type to information about a wrapped built-in resource. Returns null if type id doesn't correspond to
+		 * a builtin resource. 
+		 */
+		BuiltinResourceInfo* getBuiltinResourceInfo(ScriptResourceType type);
+
 		/**
 		 * Checks if the managed serializable object info for the specified type exists.
 		 *
@@ -72,6 +104,9 @@ namespace bs
 		/**	Gets the managed class for BansheeEngine.Component type. */
 		MonoClass* getComponentClass() const { return mComponentClass; }
 
+		/**	Gets the managed class for BansheeEngine.ManagedComponent type. */
+		MonoClass* getManagedComponentClass() const { return mManagedComponentClass; }
+
 		/**	Gets the managed class for BansheeEngine.MissingComponent type. */
 		MonoClass* getMissingComponentClass() const { return mMissingComponentClass; }
 
@@ -93,7 +128,18 @@ namespace bs
 		 */
 		void initializeBaseTypes();
 
+		/** Initializes information required for mapping builtin components to managed components. */
+		void initializeBuiltinComponentInfos();
+
+		/** Initializes information required for mapping builtin resources to managed resources. */
+		void initializeBuiltinResourceInfos();
+
 		UnorderedMap<String, SPtr<ManagedSerializableAssemblyInfo>> mAssemblyInfos;
+		UnorderedMap<::MonoReflectionType*, BuiltinComponentInfo> mBuiltinComponentInfos;
+		UnorderedMap<UINT32, BuiltinComponentInfo> mBuiltinComponentInfosByTID;
+		UnorderedMap<::MonoReflectionType*, BuiltinResourceInfo> mBuiltinResourceInfos;
+		UnorderedMap<UINT32, BuiltinResourceInfo> mBuiltinResourceInfosByTID;
+		UnorderedMap<UINT32, BuiltinResourceInfo> mBuiltinResourceInfosByType;
 		bool mBaseTypesInitialized;
 
 		MonoClass* mSystemArrayClass;
@@ -102,6 +148,7 @@ namespace bs
 		MonoClass* mSystemTypeClass;
 
 		MonoClass* mComponentClass;
+		MonoClass* mManagedComponentClass;
 		MonoClass* mSceneObjectClass;
 		MonoClass* mMissingComponentClass;
 

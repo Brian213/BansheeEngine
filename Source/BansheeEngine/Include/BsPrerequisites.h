@@ -90,20 +90,33 @@
 /** @} */
 /** @} */
 
-#if (BS_PLATFORM == BS_PLATFORM_WIN32) && !defined(__MINGW32__)
-#	ifdef BS_EXPORTS
-#		define BS_EXPORT __declspec(dllexport)
-#	else
-#       if defined( __MINGW32__ )
-#           define BS_EXPORT
-#       else
-#    		define BS_EXPORT __declspec(dllimport)
-#       endif
-#	endif
-#elif defined ( BS_GCC_VISIBILITY )
-#    define BS_EXPORT  __attribute__ ((visibility("default")))
-#else
-#    define BS_EXPORT
+// DLL export
+#if BS_PLATFORM == BS_PLATFORM_WIN32 // Windows
+#  if BS_COMPILER == BS_COMPILER_MSVC
+#    if defined(BS_STATIC_LIB)
+#      define BS_EXPORT
+#    else
+#      if defined(BS_EXPORTS)
+#        define BS_EXPORT __declspec(dllexport)
+#      else
+#        define BS_EXPORT __declspec(dllimport)
+#      endif
+#	 endif
+#  else
+#    if defined(BS_STATIC_LIB)
+#      define BS_EXPORT
+#    else
+#      if defined(BS_EXPORTS)
+#        define BS_EXPORT __attribute__ ((dllexport))
+#      else
+#        define BS_EXPORT __attribute__ ((dllimport))
+#      endif
+#	 endif
+#  endif
+#  define BS_HIDDEN
+#else // Linux/Mac settings
+#  define BS_EXPORT __attribute__ ((visibility ("default")))
+#  define BS_HIDDEN __attribute__ ((visibility ("hidden")))
 #endif
 
 #include "BsGameObject.h"
@@ -113,9 +126,6 @@
 
 namespace bs
 {
-	static const StringID RenderAPIDX9 = "D3D9RenderAPI";
-	static const StringID RenderAPIDX11 = "D3D11RenderAPI";
-	static const StringID RenderAPIOpenGL = "GLRenderAPI";
 	static const StringID RendererDefault = "RenderBeast";
 
 	class VirtualButton;
@@ -176,10 +186,9 @@ namespace bs
 	class GUICanvas;
 
 	class RenderableHandler;
-	class ProfilerOverlay;
+	class CProfilerOverlay;
 	class ProfilerOverlayInternal;
 	class DrawHelper;
-	class Renderable;
 	class PlainText;
 	class ScriptCode;
 	class ScriptCodeImportOptions;
@@ -192,23 +201,8 @@ namespace bs
 	class SpriteMaterial;
 	struct SpriteMaterialInfo;
 
-	// Components
-	class CRenderable;
-	class CLight;
-	class CAnimation;
-	class CBone;
-
-	namespace ct
-	{
-		class Renderable;
-	}
-
 	typedef GameObjectHandle<CGUIWidget> HGUIWidget;
-	typedef GameObjectHandle<CRenderable> HRenderable;
-	typedef GameObjectHandle<CLight> HLight;
-	typedef GameObjectHandle<CAnimation> HAnimation;
-	typedef GameObjectHandle<CBone> HBone;
-	typedef GameObjectHandle<ProfilerOverlay> HProfilerOverlay;
+	typedef GameObjectHandle<CProfilerOverlay> HProfilerOverlay;
 
 	typedef ResourceHandle<SpriteTexture> HSpriteTexture;
 	typedef ResourceHandle<PlainText> HPlainText;
@@ -219,24 +213,25 @@ namespace bs
 	enum TypeID_Banshee
 	{
 		/* TID_CCamera = 30000, */
-		TID_CRenderable = 30001,
+		/* TID_CRenderable = 30001, */
 		TID_SpriteTexture = 30002,
 		/* TID_Camera = 30003, */
-		TID_Renderable = 30004,
+		/* TID_Renderable = 30004, */
 		TID_PlainText = 30005,
 		TID_ScriptCode = 30006,
 		TID_ScriptCodeImportOptions = 30007,
 		TID_GUIElementStyle = 30008,
 		TID_GUISkin = 30009,
 		TID_GUISkinEntry = 30010,
-		TID_Light = 30011,
-		TID_CLight = 30012,
+		/* TID_Light = 30011, */
+		/* TID_CLight = 30012, */
 		TID_GameSettings = 30013,
 		TID_ResourceMapping = 30014,
 		TID_StandardPostProcessSettings = 30015,
 		TID_AutoExposureSettings = 30016,
 		TID_TonemappingSettings = 30017,
 		TID_WhiteBalanceSettings = 30018,
-		TID_ColorGradingSettings = 30019
+		TID_ColorGradingSettings = 30019,
+		TID_DepthOfFieldSettings = 30020
 	};
 }

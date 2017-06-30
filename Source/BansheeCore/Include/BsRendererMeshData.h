@@ -218,8 +218,11 @@ namespace bs
 		/**	Creates a vertex descriptor from a vertex layout enum. */
 		static SPtr<VertexDataDesc> vertexLayoutVertexDesc(VertexLayout type);
 
+		/** Converts a generic mesh data into mesh data format expected by the renderer. */
+		static SPtr<MeshData> convert(const SPtr<MeshData>& meshData);
+
 	private:
-		friend class ct::CoreRenderer;
+		friend class ct::Renderer;
 
 		RendererMeshData(UINT32 numVertices, UINT32 numIndices, VertexLayout layout, IndexType indexType = IT_32BIT);
 		RendererMeshData(const SPtr<MeshData>& meshData);

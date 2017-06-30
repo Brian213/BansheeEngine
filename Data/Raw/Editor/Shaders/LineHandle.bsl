@@ -1,43 +1,33 @@
 #include "$EDITOR$/LineGizmo.bslinc"
 
-Technique : inherits("LineGizmo") =
+technique LineHandle
 {
-	Language = "HLSL11";
-	
-	Pass =
-	{
-		DepthWrite = false;
-		DepthRead = false;
-		Stencil = true;
-		StencilOpFront = { KEEP, KEEP, INC, PASS };
-		Multisample = false; // This controls line rendering algorithm
-		AALine = true;
-	
-		Target =
-		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-		};
-	};
-};
+	mixin LineGizmoBase;
 
-Technique : inherits("LineGizmo") =
-{
-	Language = "GLSL";
-	
-	Pass =
+	depth
 	{
-		DepthWrite = false;
-		DepthRead = false;
-		Stencil = true;
-		StencilOpFront = { KEEP, KEEP, INC, PASS };
-		Multisample = false; // This controls line rendering algorithm
-		AALine = true;
-		
-		Target =
+		write = false;
+		read = false;
+	};
+	
+	stencil
+	{
+		enabled = true;
+		front = { keep, keep, inc, always };
+	};
+	
+	raster
+	{
+		multisample = false;
+		lineaa = true;
+	};
+	
+	blend
+	{
+		target
 		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
+			enabled = true;
+			color = { srcA, srcIA, add };
 		};
 	};
 };

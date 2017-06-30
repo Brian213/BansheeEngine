@@ -42,7 +42,7 @@ namespace bs
 			WorldTfrmDirty = 0x02
 		};
 
-		friend class CoreSceneManager;
+		friend class SceneManager;
 		friend class Prefab;
 		friend class PrefabDiff;
 		friend class PrefabUtility;
@@ -361,7 +361,7 @@ namespace bs
 		/** 
 		 * Notifies components and child scene object that a transform has been changed.  
 		 * 
-		 * @param	flags	Specifies in what way was the transform changed.
+		 * @param	flags		Specifies in what way was the transform changed.
 		 */
 		void notifyTransformChanged(TransformChangedFlags flags) const;
 
@@ -456,6 +456,19 @@ namespace bs
 		bool getActive(bool self = false);
 
 		/**
+		 * Sets the mobility of a scene object. This is used primarily as a performance hint to engine systems. Objects
+		 * with more restricted mobility will result in higher performance. Some mobility constraints will be enforced by
+		 * the engine itself, while for others the caller must be sure not to break the promise he made when mobility was
+		 * set. By default scene object's mobility is unrestricted.
+		 */
+		void setMobility(ObjectMobility mobility);
+
+		/** 
+		 * Gets the mobility setting for this scene object. See setMobility(); 
+		 */
+		ObjectMobility getMobility() const { return mMobility; }
+
+		/**
 		 * Makes a deep copy of this object.
 		 * 			
 		 * @param[in]	instantiate	If false, the cloned hierarchy will just be a memory copy, but will not be present in the
@@ -468,13 +481,14 @@ namespace bs
 		Vector<HSceneObject> mChildren;
 		bool mActiveSelf;
 		bool mActiveHierarchy;
+		ObjectMobility mMobility;
 
 		/**
 		 * Internal version of setParent() that allows you to set a null parent.
 		 *
-		 * @param[in]	parent			New parent.
-		 * @param[in]	keepWorldPos	Determines should the current transform be maintained even after the parent is 
-		 *								changed (this means the local transform will be modified accordingly).
+		 * @param[in]	parent				New parent.
+		 * @param[in]	keepWorldTransform	Determines should the current transform be maintained even after the parent is 
+		 *									changed (this means the local transform will be modified accordingly).
 		 */
 		void _setParent(const HSceneObject& parent, bool keepWorldTransform = true);
 
@@ -513,27 +527,22 @@ namespace bs
 			GameObjectHandle<T> newComponent =
 				GameObjectManager::instance().registerObject(gameObject);
 
-			newComponent->mThisHandle = newComponent;
-			mComponents.push_back(newComponent);
-
-			if (isInstantiated())
-			{
-				newComponent->_instantiate();
-				newComponent->onInitialized();
-
-				if (getActive())
-					newComponent->onEnabled();
-			}
-
+			addAndInitializeComponent(newComponent);
 			return newComponent;
 		}
+
+		/** 
+		 * Constructs a new component of the specified type id and adds it to the internal component list. Component must
+		 * have a parameterless constructor.
+		 */
+		HComponent addComponent(UINT32 typeId);
 
 		/**
 		 * Searches for a component with the specific type and returns the first one it finds. Will also return components
 		 * derived from the type.
 		 * 			
-		 * @tparam	typename T	Type of the component.
-		 * @return				Component if found, nullptr otherwise.
+		 * @tparam	T	Type of the component.
+		 * @return		Component if found, nullptr otherwise.
 		 *
 		 * @note	
 		 * Don't call this too often as it is relatively slow. It is more efficient to call it once and store the result 
@@ -647,6 +656,12 @@ namespace bs
 
 		/**	Adds the component to the internal component array. */
 		void addComponentInternal(const SPtr<Component> component);
+
+		/**	Adds the component to the internal component array, and initializes it. */
+		void addAndInitializeComponent(const HComponent& component);
+
+		/**	Adds the component to the internal component array, and initializes it. */
+		void addAndInitializeComponent(const SPtr<Component> component);
 
 		Vector<HComponent> mComponents;
 

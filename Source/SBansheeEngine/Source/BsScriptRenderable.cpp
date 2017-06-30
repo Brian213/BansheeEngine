@@ -7,13 +7,14 @@
 #include "BsMonoManager.h"
 #include "BsMonoUtil.h"
 #include "BsApplication.h"
-#include "BsRenderable.h"
+#include "BsCRenderable.h"
 #include "BsScriptSceneObject.h"
 #include "BsSceneObject.h"
 #include "BsSceneManager.h"
 #include "BsScriptMesh.h"
 #include "BsScriptAnimation.h"
 #include "BsScriptMaterial.h"
+#include "BsScriptResourceManager.h"
 
 namespace bs
 {

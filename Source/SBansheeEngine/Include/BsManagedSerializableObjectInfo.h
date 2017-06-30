@@ -33,29 +33,15 @@ namespace bs
 	/** Valid reference script types. */
 	enum class ScriptReferenceType
 	{
-		Texture2D,
-		Texture3D,
-		TextureCube,
-		SpriteTexture,
+		BuiltinResourceBase,
+		BuiltinResource,
+		ManagedResourceBase,
 		ManagedResource,
-		PlainText,
-		ScriptCode,
-		Shader,
-		ShaderInclude,
-		Material,
-		Mesh,
-		Prefab,
-		Font,
-		StringTable,
-		GUISkin,
-		SceneObject,
-		Component,
-		PhysicsMaterial,
-		PhysicsMesh,
-		AudioClip,
-		AnimationClip,
+		BuiltinComponentBase,
+		BuiltinComponent,
+		ManagedComponentBase,
 		ManagedComponent,
-		Resource,
+		SceneObject,
 		Count // Keep at end
 	};
 
@@ -140,6 +126,7 @@ namespace bs
 		::MonoClass* getMonoClass() const override;
 
 		ScriptReferenceType mType;
+		UINT32 mRTIITypeId;
 		String mTypeNamespace;
 		String mTypeName;
 

@@ -9,8 +9,8 @@ namespace bs
 	 */
 
 	/**	Factors used when blending new pixels with existing pixels. */
-    enum BlendFactor
-    {
+	enum BlendFactor
+	{
 		BF_ONE, /**< Use a value of one for all pixel components. */
 		BF_ZERO, /**< Use a value of zero for all pixel components. */
 		BF_DEST_COLOR, /**< Use the existing pixel value. */
@@ -21,7 +21,7 @@ namespace bs
 		BF_SOURCE_ALPHA, /**< Use the newly generated alpha value. */
 		BF_INV_DEST_ALPHA, /**< Use the inverse of the existing alpha value. */
 		BF_INV_SOURCE_ALPHA /**< Use the inverse of the newly generated alpha value. */
-    };
+	};
 
 	/**	Operations that determines how are blending factors combined. */
 	enum BlendOperation
@@ -34,46 +34,45 @@ namespace bs
 	};
 
 	/**	Comparison functions used for the depth/stencil buffer. */
-    enum CompareFunction
-    {
+	enum CompareFunction
+	{
 		CMPF_ALWAYS_FAIL, /**< Operation will always fail. */
 		CMPF_ALWAYS_PASS, /**< Operation will always pass. */
 		CMPF_LESS, /**< Operation will pass if the new value is less than existing value. */
-        CMPF_LESS_EQUAL, /**< Operation will pass if the new value is less or equal than existing value. */
-        CMPF_EQUAL, /**< Operation will pass if the new value is equal to the existing value. */
-        CMPF_NOT_EQUAL, /**< Operation will pass if the new value is not equal to the existing value. */
-        CMPF_GREATER_EQUAL, /**< Operation will pass if the new value greater or equal than the existing value. */
-        CMPF_GREATER /**< Operation will pass if the new value greater than the existing value. */
-    };
+		CMPF_LESS_EQUAL, /**< Operation will pass if the new value is less or equal than existing value. */
+		CMPF_EQUAL, /**< Operation will pass if the new value is equal to the existing value. */
+		CMPF_NOT_EQUAL, /**< Operation will pass if the new value is not equal to the existing value. */
+		CMPF_GREATER_EQUAL, /**< Operation will pass if the new value greater or equal than the existing value. */
+		CMPF_GREATER /**< Operation will pass if the new value greater than the existing value. */
+	};
 
 	/**
 	 * Types of texture addressing modes that determine what happens when texture coordinates are outside of the valid range.
 	 */
-    enum TextureAddressingMode
-    {
+	enum TextureAddressingMode
+	{
 		TAM_WRAP, /**< Coordinates wrap back to the valid range. */
 		TAM_MIRROR, /**< Coordinates flip every time the size of the valid range is passed. */
 		TAM_CLAMP, /**< Coordinates are clamped within the valid range. */
 		TAM_BORDER /**< Coordinates outside of the valid range will return a separately set border color. */
-    };
+	};
 
 	/**	Types of available filtering situations. */
-    enum FilterType
-    {
+	enum FilterType
+	{
 		FT_MIN, /**< The filter used when shrinking a texture. */
-        FT_MAG, /**< The filter used when magnifying a texture. */
-        FT_MIP /**< The filter used when filtering between mipmaps. */
-    };
+		FT_MAG, /**< The filter used when magnifying a texture. */
+		FT_MIP /**< The filter used when filtering between mipmaps. */
+	};
 
 	/**	Filtering options for textures. */
-    enum FilterOptions
-    {
+	enum FilterOptions
+	{
 		FO_NONE = 0, /**< Use no filtering. Only relevant for mipmap filtering. */
 		FO_POINT = 1, /**< Filter using the nearest found pixel. Most basic filtering. */
 		FO_LINEAR = 2, /**< Average a 2x2 pixel area, signifies bilinear filtering for texture, trilinear for mipmaps. */
 		FO_ANISOTROPIC = 3, /**< More advanced filtering that improves quality when viewing textures at a steep angle */
-		FO_USE_COMPARISON = 4 /**< Specifies that the sampled values will be compared against existing sampled data. Should be OR-ed with other filtering options. */
-    };
+	};
 
 	/**	Types of frame buffers. */
 	enum FrameBufferType
@@ -88,19 +87,19 @@ namespace bs
 	 * be used for determining front or back facing polygons by checking the order of its vertices from the render 
 	 * perspective.
 	 */
-    enum CullingMode
-    {
+	enum CullingMode
+	{
 		CULL_NONE = 0, /**< Hardware performs no culling and renders both sides. */
 		CULL_CLOCKWISE = 1, /**< Hardware culls faces that have a clockwise vertex ordering. */
-        CULL_COUNTERCLOCKWISE = 2 /**< Hardware culls faces that have a counter-clockwise vertex ordering. */
-    };
+		CULL_COUNTERCLOCKWISE = 2 /**< Hardware culls faces that have a counter-clockwise vertex ordering. */
+	};
 
 	/**	Polygon mode to use when rasterizing. */
-    enum PolygonMode
-    {
+	enum PolygonMode
+	{
 		PM_WIREFRAME = 1, /**< Render as wireframe showing only polygon outlines. */
-        PM_SOLID = 2 /**< Render as solid showing whole polygons. */
-    };
+		PM_SOLID = 2 /**< Render as solid showing whole polygons. */
+	};
 
 	/**	Types of action that can happen on the stencil buffer. */
 	enum StencilOperation
@@ -140,7 +139,7 @@ namespace bs
 		 * Allows you to write to the buffer. Can cause a CPU-GPU sync point so avoid using it often (every frame) as 
 		 * that might limit your performance significantly.
 		 */
-        GBL_READ_WRITE,
+		GBL_READ_WRITE,
 		/**
 		 * Allows you to write to the buffer. Tells the driver to completely discard the contents of the buffer you are 
 		 * writing to. The driver will (most likely) internally allocate another buffer with same specifications (which is
@@ -160,7 +159,7 @@ namespace bs
 		 * that is currently used. This will also avoid CPU-GPU stalls, without requiring you to discard the entire buffer.
 		 * However it is hard to guarantee when GPU has finished using a buffer.
 		 */
-        GBL_WRITE_ONLY_NO_OVERWRITE,
+		GBL_WRITE_ONLY_NO_OVERWRITE,
 		/** Allows you to both read and write to a buffer. */
 		GBL_WRITE_ONLY	
 	};
@@ -187,7 +186,7 @@ namespace bs
 		 * Signifies that you don't plan on modifying the buffer often (or at all) after creation. Modifying such buffer 
 		 * will involve a larger performance hit. Mutually exclusive with GBU_DYNAMIC.
 		 */
-        GBU_STATIC = 0x01,
+		GBU_STATIC = 0x01,
 		/** 
 		 * Signifies that you will modify this buffer fairly often (e.g. every frame). Mutually exclusive with GBU_STATIC. 
 		 */
@@ -332,12 +331,23 @@ namespace bs
 	};
 
 	/**	Available texture types. */
-	enum TextureType
+	enum BS_SCRIPT_EXPORT() TextureType
 	{
-		TEX_TYPE_1D = 1, /**< One dimensional texture. Just a row of pixels. */
-		TEX_TYPE_2D = 2, /**< Two dimensional texture. */
-		TEX_TYPE_3D = 3, /**< Three dimensional texture. */
-		TEX_TYPE_CUBE_MAP = 4 /**< Texture consisting out of six 2D textures describing an inside of a cube. Allows special sampling. */
+		/** One dimensional texture. Just a row of pixels. */
+		TEX_TYPE_1D			BS_SCRIPT_EXPORT(n:Texture1D)	= 1, 
+		/** Two dimensional texture. */
+		TEX_TYPE_2D			BS_SCRIPT_EXPORT(n:Texture2D)	= 2,
+		/** Three dimensional texture. */
+		TEX_TYPE_3D			BS_SCRIPT_EXPORT(n:Texture3D)	= 3,
+		/** Texture consisting out of six 2D textures describing an inside of a cube. Allows special sampling. */
+		TEX_TYPE_CUBE_MAP	BS_SCRIPT_EXPORT(n:TextureCube) = 4 
+	};
+
+	/**	Projection type to use by the camera. */
+	enum ProjectionType
+	{
+		PT_ORTHOGRAPHIC, /**< Projection type where object size remains constant and parallel lines remain parallel. */
+		PT_PERSPECTIVE /**< Projection type that emulates human vision. Objects farther away appear smaller. */
 	};
 
 	/**	Contains data about a type used for GPU data parameters. */
@@ -406,6 +416,13 @@ namespace bs
 		GPOT_RWTEXTURE2D = 51, /**< 2D texture with unordered read/writes. */
 		GPOT_RWTEXTURE3D = 52, /**< 3D texture with unordered read/writes. */
 		GPOT_RWTEXTURE2DMS = 53, /**< 2D texture with multiple samples and unordered read/writes. */
+		GPOT_TEXTURE1DARRAY = 54, /**< 1D texture with multiple array entries. */
+		GPOT_TEXTURE2DARRAY = 55, /**< 2D texture with multiple array entries. */
+		GPOT_TEXTURECUBEARRAY = 56, /**< Cubemap texture with multiple array entries. */
+		GPOT_TEXTURE2DMSARRAY = 57, /**< 2D texture with multiple samples and array entries. */
+		GPOT_RWTEXTURE1DARRAY = 58, /**< 1D texture with multiple array entries and unordered read/writes. */
+		GPOT_RWTEXTURE2DARRAY = 59, /**< 2D texture with multiple array entries and unordered read/writes. */
+		GPOT_RWTEXTURE2DMSARRAY = 60, /**< 2D texture with multiple array entries, samples and unordered read/writes. */
 		GPOT_UNKNOWN = 0xffff
 	};
 
@@ -521,12 +538,31 @@ namespace bs
 		RT_COLOR5 = 1 << 5,
 		RT_COLOR6 = 1 << 6,
 		RT_COLOR7 = 1 << 7,
-		RT_DEPTH = 1 << 31,
+		RT_DEPTH = 1 << 30,
+		RT_STENCIL = 1 << 31,
+		RT_DEPTH_STENCIL = (1 << 30) | (1 << 31),
 		RT_ALL = 0xFF
 	};
 
 	typedef Flags<RenderSurfaceMaskBits> RenderSurfaceMask;
 	BS_FLAGS_OPERATORS(RenderSurfaceMaskBits);
+
+	/** 
+	 * Controls what kind of mobility restrictions a scene object has. This is used primarily as a performance hint to
+	 * other systems. Generally the more restricted the mobility the higher performance can be achieved.
+	 */
+	enum class BS_SCRIPT_EXPORT() ObjectMobility
+	{
+		/** Scene object can be moved and has no mobility restrictions. */
+		Movable,
+		/** 
+		 * Scene object isn't allowed to be moved but is allowed to be visually changed in other ways (e.g. changing the
+		 * displayed mesh or light intensity (depends on attached components).
+		 */
+		Immovable,
+		/** Scene object isn't allowed to be moved nor is it allowed to be visually changed. Object must be fully static. */
+		Static
+	};
 
 	/**	Texture addressing mode, per component. */
 	struct UVWAddressingMode

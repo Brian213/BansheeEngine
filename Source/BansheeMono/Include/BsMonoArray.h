@@ -136,6 +136,30 @@ namespace bs
 		}
 
 		template<>
+		inline ScriptArray ScriptArray_create<UINT8>(UINT32 size)
+		{
+			return ScriptArray(MonoUtil::getByteClass(), size);
+		}
+
+		template<>
+		inline ScriptArray ScriptArray_create<INT8>(UINT32 size)
+		{
+			return ScriptArray(MonoUtil::getSByteClass(), size);
+		}
+
+		template<>
+		inline ScriptArray ScriptArray_create<UINT16>(UINT32 size)
+		{
+			return ScriptArray(MonoUtil::getUINT16Class(), size);
+		}
+
+		template<>
+		inline ScriptArray ScriptArray_create<INT16>(UINT32 size)
+		{
+			return ScriptArray(MonoUtil::getINT16Class(), size);
+		}
+
+		template<>
 		inline ScriptArray ScriptArray_create<UINT32>(UINT32 size)
 		{
 			return ScriptArray(MonoUtil::getUINT32Class(), size);
@@ -178,9 +202,21 @@ namespace bs
 		}
 
 		template<>
+		inline ScriptArray ScriptArray_create<double>(UINT32 size)
+		{
+			return ScriptArray(MonoUtil::getDoubleClass(), size);
+		}
+
+		template<>
 		inline ScriptArray ScriptArray_create<bool>(UINT32 size)
 		{
 			return ScriptArray(MonoUtil::getBoolClass(), size);
+		}
+
+		template<>
+		inline ScriptArray ScriptArray_create<MonoObject*>(UINT32 size)
+		{
+			return ScriptArray(MonoUtil::getObjectClass(), size);
 		}
 	}
 

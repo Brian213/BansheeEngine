@@ -27,6 +27,7 @@
 #include "BsFileSerializer.h"
 #include "BsTextureImportOptions.h"
 #include "BsBuiltinResourcesHelper.h"
+#include "BsRendererMeshData.h"
 #include "BsGUISlider.h"
 #include "BsGUIScrollBar.h"
 
@@ -237,7 +238,9 @@ namespace bs
 #if BS_DEBUG_MODE
 		if (FileSystem::exists(mBuiltinRawDataFolder))
 		{
-			if (BuiltinResourcesHelper::checkForModifications(mBuiltinRawDataFolder, mBuiltinDataFolder + L"Timestamp.asset"))
+			UINT32 modifications = 
+				BuiltinResourcesHelper::checkForModifications(mBuiltinRawDataFolder, mBuiltinDataFolder + L"Timestamp.asset");
+			if (modifications > 0)
 			{
 				SPtr<ResourceManifest> oldResourceManifest;
 				if (FileSystem::exists(ResourceManifestPath))
@@ -250,7 +253,7 @@ namespace bs
 				mResourceManifest = ResourceManifest::create("BuiltinResources");
 				gResources().registerResourceManifest(mResourceManifest);
 
-				preprocess();
+				preprocess(modifications == 2);
 				BuiltinResourcesHelper::writeTimestamp(mBuiltinDataFolder + L"Timestamp.asset");
 
 				ResourceManifest::save(mResourceManifest, ResourceManifestPath, mBuiltinDataFolder);
@@ -357,7 +360,7 @@ namespace bs
 		gCoreThread().submit(true);
 	}
 
-	void BuiltinResources::preprocess()
+	void BuiltinResources::preprocess(bool forceImport)
 	{
 		// Hidden dependency: Textures need to be generated before shaders as they may use the default textures
 		generateTextures();
@@ -408,11 +411,16 @@ namespace bs
 		Path iconFolder = mBuiltinDataFolder + IconFolder;
 		Path shaderIncludeFolder = mBuiltinDataFolder + ShaderIncludeFolder;
 
-		BuiltinResourcesHelper::importAssets(cursorsJSON, rawCursorFolder, mEngineCursorFolder, mResourceManifest);
-		BuiltinResourcesHelper::importAssets(iconsJSON, rawIconFolder, iconFolder, mResourceManifest);
-		BuiltinResourcesHelper::importAssets(includesJSON, rawShaderIncludeFolder, shaderIncludeFolder, mResourceManifest); // Hidden dependency: Includes must be imported before shaders
-		BuiltinResourcesHelper::importAssets(shadersJSON, rawShaderFolder, mEngineShaderFolder, mResourceManifest);
-		BuiltinResourcesHelper::importAssets(skinJSON, rawSkinFolder, skinFolder, mResourceManifest, BuiltinResourcesHelper::AssetType::Sprite);
+		BuiltinResourcesHelper::importAssets(cursorsJSON, rawCursorFolder, mEngineCursorFolder, mResourceManifest, 
+			BuiltinResourcesHelper::AssetType::Normal, true);
+		BuiltinResourcesHelper::importAssets(iconsJSON, rawIconFolder, iconFolder, mResourceManifest, 
+			BuiltinResourcesHelper::AssetType::Normal, true);
+		BuiltinResourcesHelper::importAssets(includesJSON, rawShaderIncludeFolder, shaderIncludeFolder, mResourceManifest,
+			BuiltinResourcesHelper::AssetType::Normal, true); // Hidden dependency: Includes must be imported before shaders
+		BuiltinResourcesHelper::importAssets(shadersJSON, rawShaderFolder, mEngineShaderFolder, mResourceManifest,
+			BuiltinResourcesHelper::AssetType::Normal, true);
+		BuiltinResourcesHelper::importAssets(skinJSON, rawSkinFolder, skinFolder, mResourceManifest, 
+			BuiltinResourcesHelper::AssetType::Sprite, true);
 
 		// Import font
 		BuiltinResourcesHelper::importFont(mBuiltinRawDataFolder + DefaultFontFilename, DefaultFontFilename, 
@@ -530,17 +538,16 @@ namespace bs
 		inputBoxStyle.hover.textColor = TextNormalColor;
 		inputBoxStyle.focused.textColor = TextNormalColor;
 		inputBoxStyle.active.textColor = TextNormalColor;
-		inputBoxStyle.border.left = 4;
-		inputBoxStyle.border.right = 4;
+		inputBoxStyle.border.left = 1;
+		inputBoxStyle.border.right = 3;
 		inputBoxStyle.border.top = 4;
-		inputBoxStyle.border.bottom = 6;
+		inputBoxStyle.border.bottom = 1;
 		inputBoxStyle.contentOffset.left = 4;
 		inputBoxStyle.contentOffset.right = 4;
 		inputBoxStyle.contentOffset.top = 4;
 		inputBoxStyle.contentOffset.bottom = 4;
-		inputBoxStyle.margins.bottom = 2;
 		inputBoxStyle.fixedHeight = true;
-		inputBoxStyle.height = 21;
+		inputBoxStyle.height = 19;
 		inputBoxStyle.minWidth = 10;
 		inputBoxStyle.font = font;
 		inputBoxStyle.fontSize = DefaultFontSize;
@@ -1100,17 +1107,19 @@ namespace bs
 	{
 		SPtr<VertexDataDesc> vertexDesc = bs_shared_ptr_new<VertexDataDesc>();
 		vertexDesc->addVertElem(VET_FLOAT3, VES_POSITION);
+		vertexDesc->addVertElem(VET_FLOAT2, VES_TEXCOORD);
 		vertexDesc->addVertElem(VET_FLOAT3, VES_NORMAL);
+		vertexDesc->addVertElem(VET_FLOAT4, VES_TANGENT);
 		vertexDesc->addVertElem(VET_COLOR, VES_COLOR);
 
 		UINT32 boxNumVertices = 0;
 		UINT32 boxNumIndices = 0;
 		ShapeMeshes3D::getNumElementsAABox(boxNumVertices, boxNumIndices);
-		SPtr<MeshData> boxMeshData = bs_shared_ptr_new<MeshData>(boxNumVertices, boxNumIndices, vertexDesc);
+		SPtr<MeshData> boxMeshData = MeshData::create(boxNumVertices, boxNumIndices, vertexDesc);
 		AABox box(Vector3(-0.5f, -0.5f, -0.5f), Vector3(0.5f, 0.5f, 0.5f));
 
 		ShapeMeshes3D::solidAABox(box, boxMeshData, 0, 0);
-		SPtr<Mesh> boxMesh = Mesh::_createPtr(boxMeshData);
+		SPtr<Mesh> boxMesh = Mesh::_createPtr(RendererMeshData::convert(boxMeshData));
 
 		UINT32 sphereNumVertices = 0;
 		UINT32 sphereNumIndices = 0;
@@ -1118,7 +1127,7 @@ namespace bs
 		SPtr<MeshData> sphereMeshData = bs_shared_ptr_new<MeshData>(sphereNumVertices, sphereNumIndices, vertexDesc);
 
 		ShapeMeshes3D::solidSphere(Sphere(Vector3::ZERO, 1.0f), sphereMeshData, 0, 0, 3);
-		SPtr<Mesh> sphereMesh = Mesh::_createPtr(sphereMeshData);
+		SPtr<Mesh> sphereMesh = Mesh::_createPtr(RendererMeshData::convert(sphereMeshData));
 
 		UINT32 coneNumVertices = 0;
 		UINT32 coneNumIndices = 0;
@@ -1126,7 +1135,7 @@ namespace bs
 		SPtr<MeshData> coneMeshData = bs_shared_ptr_new<MeshData>(coneNumVertices, coneNumIndices, vertexDesc);
 
 		ShapeMeshes3D::solidCone(Vector3::ZERO, Vector3::UNIT_Y, 1.0f, 1.0f, Vector2::ONE, coneMeshData, 0, 0);
-		SPtr<Mesh> coneMesh = Mesh::_createPtr(coneMeshData);
+		SPtr<Mesh> coneMesh = Mesh::_createPtr(RendererMeshData::convert(coneMeshData));
 
 		UINT32 quadNumVertices = 8;
 		UINT32 quadNumIndices = 12;
@@ -1137,7 +1146,7 @@ namespace bs
 		std::array<float, 2> sizes = {{ 1.0f, 1.0f }};
 		Rect3 rect(Vector3::ZERO, axes, sizes);
 		ShapeMeshes3D::solidQuad(rect, quadMeshData, 0, 0);
-		SPtr<Mesh> quadMesh = Mesh::_createPtr(quadMeshData);
+		SPtr<Mesh> quadMesh = Mesh::_createPtr(RendererMeshData::convert(quadMeshData));
 
 		UINT32 discNumVertices = 0;
 		UINT32 discNumIndices = 0;
@@ -1145,7 +1154,7 @@ namespace bs
 		SPtr<MeshData> discMeshData = bs_shared_ptr_new<MeshData>(discNumVertices, discNumIndices, vertexDesc);
 
 		ShapeMeshes3D::solidDisc(Vector3::ZERO, 1.0f, Vector3::UNIT_Y, discMeshData, 0, 0);
-		SPtr<Mesh> discMesh = Mesh::_createPtr(discMeshData);
+		SPtr<Mesh> discMesh = Mesh::_createPtr(RendererMeshData::convert(discMeshData));
 
 		// Save all meshes
 		Path outputDir = mEngineMeshFolder;
@@ -1188,7 +1197,13 @@ namespace bs
 		programPath.append(path);
 		programPath.setExtension(programPath.getExtension() + ".asset");
 
-		return gResources().load<Shader>(programPath);
+		HShader shader = gResources().load<Shader>(programPath);
+
+#if BS_DEBUG_MODE
+		BuiltinResourcesHelper::verifyAndReportShader(shader);
+#endif
+
+		return shader;
 	}
 
 	HTexture BuiltinResources::getCursorTexture(const WString& name)

@@ -9,7 +9,7 @@ set(BansheeEditor_INC
 	"../BansheeEngine/Include")
 
 include_directories(${BansheeEditor_INC})	
-	
+
 # Target
 add_library(BansheeEditor SHARED ${BS_BANSHEEEDITOR_SRC})
 

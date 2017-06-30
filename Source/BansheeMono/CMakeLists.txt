@@ -10,7 +10,7 @@ set(BansheeMono_INC
 	"../../Dependencies/Mono/include")
 
 include_directories(${BansheeMono_INC})	
-	
+
 # Target
 add_library(BansheeMono SHARED ${BS_BANSHEEMONO_SRC})
 

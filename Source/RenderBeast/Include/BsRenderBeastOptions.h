@@ -21,7 +21,7 @@ namespace bs { namespace ct
 	};
 
 	/** A set of options used for controlling the rendering of the RenderBeast renderer. */
-	struct BS_BSRND_EXPORT RenderBeastOptions : public CoreRendererOptions
+	struct RenderBeastOptions : public RendererOptions
 	{
 		RenderBeastOptions() { }
 
@@ -39,6 +39,18 @@ namespace bs { namespace ct
 		 * changes. Sorting by material can reduce CPU usage but could increase overdraw.
 		 */
 		StateReduction stateReductionMode = StateReduction::Distance;
+
+		/**
+		 * Determines the maximum shadow map size, in pixels. The system might decide to use smaller resolution maps for
+		 * shadows far away, but will never increase the resolution past the provided value.
+		 */
+		UINT32 shadowMapSize = 2048;
+
+		/**
+		 * Determines the number of samples used for percentage closer shadow map filtering. Higher values yield higher
+		 * quality shadows. Valid range is [1, 4].
+		 */
+		UINT32 shadowFilteringQuality = 4;
 	};
 
 	/** @} */

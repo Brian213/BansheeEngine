@@ -7,15 +7,11 @@
 #include "BsMaterial.h"
 #include "BsGpuParamsSet.h"
 #include "BsPass.h"
-#include "BsBlendState.h"
-#include "BsDepthStencilState.h"
-#include "BsRasterizerState.h"
 #include "BsGpuParams.h"
-#include "BsGpuParamDesc.h"
-#include "BsGpuParamBlockBuffer.h"
 #include "BsShapeMeshes3D.h"
 #include "BsLight.h"
 #include "BsShader.h"
+#include "BsIBLUtility.h"
 
 namespace bs { namespace ct
 {
@@ -43,7 +39,7 @@ namespace bs { namespace ct
 			UINT8* positionData = meshData->getElementData(VES_POSITION);
 
 			Sphere localSphere(Vector3::ZERO, 1.0f);
-			ShapeMeshes3D::solidSphere(localSphere, positionData, nullptr, 0,
+			ShapeMeshes3D::solidSphere(localSphere, positionData, nullptr, nullptr, 0,
 				vertexDesc->getVertexStride(), indexData, 0, 3);
 
 			mPointLightStencilMesh = Mesh::create(meshData);
@@ -121,7 +117,7 @@ namespace bs { namespace ct
 			UINT8* positionData = meshData->getElementData(VES_POSITION);
 
 			AABox localBox(-Vector3::ONE * 1500.0f, Vector3::ONE * 1500.0f);
-			ShapeMeshes3D::solidAABox(localBox, positionData, nullptr, 0,
+			ShapeMeshes3D::solidAABox(localBox, positionData, nullptr, nullptr, 0,
 									   vertexDesc->getVertexStride(), indexData, 0);
 
 			mSkyBoxMesh = Mesh::create(meshData);
@@ -130,11 +126,13 @@ namespace bs { namespace ct
 		// TODO - When I add proper preprocessor support, merge these into a single material
 		mResolveMat = bs_shared_ptr_new<ResolveMat>();
 		mBlitMat = bs_shared_ptr_new<BlitMat>();
+
+		IBLUtility::startUp();
 	}
 
 	RendererUtility::~RendererUtility()
 	{
-
+		IBLUtility::shutDown();
 	}
 
 	void RendererUtility::setPass(const SPtr<Material>& material, UINT32 passIdx, UINT32 techniqueIdx)
@@ -162,6 +160,11 @@ namespace bs { namespace ct
 
 		RenderAPI& rapi = RenderAPI::instance();
 		rapi.setGpuParams(gpuParams);
+	}
+
+	void RendererUtility::draw(const SPtr<MeshBase>& mesh, UINT32 numInstances)
+	{
+		draw(mesh, mesh->getProperties().getSubMesh(0), numInstances);
 	}
 
 	void RendererUtility::draw(const SPtr<MeshBase>& mesh, const SubMesh& subMesh, UINT32 numInstances)
@@ -291,7 +294,7 @@ namespace bs { namespace ct
 		const RenderAPIInfo& rapiInfo = RenderAPI::instance().getAPIInfo();
 		Vector3 vertices[4];
 
-		if (rapiInfo.getNDCYAxisDown())
+		if (rapiInfo.isFlagSet(RenderAPIFeatureFlag::NDCYAxisDown))
 		{
 			vertices[0] = Vector3(-1.0f, -1.0f, 0.0f);
 			vertices[1] = Vector3(1.0f, -1.0f, 0.0f);
@@ -307,7 +310,7 @@ namespace bs { namespace ct
 		}
 
 		Vector2 uvs[4];
-		if (rapiInfo.getUVYAxisUp() ^ flipUV)
+		if (rapiInfo.isFlagSet(RenderAPIFeatureFlag::UVYAxisUp) ^ flipUV)
 		{
 			uvs[0] = Vector2(uv.x, uv.y + uv.height);
 			uvs[1] = Vector2(uv.x + uv.width, uv.y + uv.height);

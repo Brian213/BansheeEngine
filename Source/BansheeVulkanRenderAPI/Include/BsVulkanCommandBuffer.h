@@ -10,7 +10,10 @@
 
 namespace bs { namespace ct
 {
+	class VulkanOcclusionQuery;
+	class VulkanTimerQuery;
 	class VulkanImage;
+
 	/** @addtogroup Vulkan
 	 *  @{
 	 */
@@ -177,8 +180,12 @@ namespace bs { namespace ct
 		/** Returns true if the command buffer is currently recording a render pass. */
 		bool isInRenderPass() const { return mState == State::RecordingRenderPass; }
 
-		/** Checks the internal fence if done executing. */
-		bool checkFenceStatus() const;
+		/** 
+		 * Checks the internal fence if done executing. 
+		 * 
+		 * @param[in]	block	If true, the system will block until the fence is signaled.
+		 */
+		bool checkFenceStatus(bool block) const;
 
 		/** 
 		 * Resets the command buffer back in Ready state. Should be called when command buffer is done executing on a 
@@ -229,7 +236,13 @@ namespace bs { namespace ct
 		 * Lets the command buffer know that the provided framebuffer resource has been queued on it, and will be used by
 		 * the device when the command buffer is submitted.
 		 */
-		void registerResource(VulkanFramebuffer* res, RenderSurfaceMask loadMask, VulkanUseFlags flags);
+		void registerResource(VulkanFramebuffer* res, RenderSurfaceMask loadMask, UINT32 readMask);
+
+		/** Notifies the command buffer that the provided query has been queued on it. */
+		void registerQuery(VulkanOcclusionQuery* query) { mOcclusionQueries.insert(query); }
+
+		/** Notifies the command buffer that the provided query has been queued on it. */
+		void registerQuery(VulkanTimerQuery* query) { mTimerQueries.insert(query); }
 
 		/************************************************************************/
 		/* 								COMMANDS	                     		*/
@@ -239,7 +252,7 @@ namespace bs { namespace ct
 		 * Assigns a render target the the command buffer. This render target's framebuffer and render pass will be used
 		 * when beginRenderPass() is called. Command buffer must not be currently recording a render pass.
 		 */
-		void setRenderTarget(const SPtr<RenderTarget>& rt, bool readOnlyDepthStencil, RenderSurfaceMask loadMask);
+		void setRenderTarget(const SPtr<RenderTarget>& rt, UINT32 readOnlyFlags, RenderSurfaceMask loadMask);
 
 		/** Clears the entirety currently bound render target. */
 		void clearRenderTarget(UINT32 buffers, const Color& color, float depth, UINT16 stencil, UINT8 targetMask);
@@ -301,6 +314,29 @@ namespace bs { namespace ct
 		 */
 		void resetQuery(VulkanQuery* query);
 
+		/** 
+		 * Issues a pipeline barrier on the provided buffer. See vkCmdPipelineBarrier in Vulkan spec. for usage
+		 * information.
+		 */
+		void memoryBarrier(VkBuffer buffer, VkAccessFlags srcAccessFlags, VkAccessFlags dstAccessFlags,
+						   VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage);
+
+		/** 
+		 * Issues a pipeline barrier on the provided image. See vkCmdPipelineBarrier in Vulkan spec. for usage
+		 * information.
+		 */
+		void memoryBarrier(VkImage image, VkAccessFlags srcAccessFlags, VkAccessFlags dstAccessFlags,
+						   VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage, VkImageLayout layout, 
+						   const VkImageSubresourceRange& range);
+
+		/** 
+		 * Issues a pipeline barrier on the provided image, changing its layout. See vkCmdPipelineBarrier in Vulkan spec. 
+		 * for usage information.
+		 */
+		void setLayout(VkImage image, VkAccessFlags srcAccessFlags, VkAccessFlags dstAccessFlags, 
+			VkImageLayout oldLayout, VkImageLayout newLayout, const VkImageSubresourceRange& range);
+
+
 	private:
 		friend class VulkanCmdBufferPool;
 		friend class VulkanCommandBuffer;
@@ -318,6 +354,12 @@ namespace bs { namespace ct
 		{
 			VkAccessFlags accessFlags;
 			ResourceUseHandle useHandle;
+
+			/** 
+			 * True if the buffer was at some point written to by the shader during the current render pass, and barrier
+			 * wasn't issued yet. 
+			 */
+			bool needsBarrier;
 		};
 
 		/** Contains information about a single Vulkan image resource bound/used on this command buffer. */
@@ -345,9 +387,15 @@ namespace bs { namespace ct
 			bool hasTransitioned : 1;
 			bool isReadOnly : 1;
 			bool isInitialReadOnly : 1;
+
+			/** 
+			 * True if the buffer was at some point written to by the shader during the current render pass, and barrier
+			 * wasn't issued yet. 
+			 */
+			bool needsBarrier : 1;
 		};
 
-		/** Checks if all the prerequisites for rendering have been made (e.g. render target and pipeline state are set. */
+		/** Checks if all the prerequisites for rendering have been made (e.g. render target and pipeline state are set.) */
 		bool isReadyForRender();
 
 		/** Marks the command buffer as submitted on a queue. */
@@ -392,6 +440,9 @@ namespace bs { namespace ct
 		/** Finds a subresource info structure containing the specified face and mip level of the provided image. */
 		ImageSubresourceInfo& findSubresourceInfo(VulkanImage* image, UINT32 face, UINT32 mip);
 
+		/** Gets all queries registered on this command buffer that haven't been ended. */
+		void getInProgressQueries(Vector<VulkanTimerQuery*>& timer, Vector<VulkanOcclusionQuery*>& occlusion) const;
+
 		UINT32 mId;
 		UINT32 mQueueFamily;
 		State mState;
@@ -407,14 +458,17 @@ namespace bs { namespace ct
 		VulkanFramebuffer* mFramebuffer;
 		UINT32 mRenderTargetWidth;
 		UINT32 mRenderTargetHeight;
-		bool mRenderTargetDepthReadOnly;
+		UINT32 mRenderTargetReadOnlyFlags;
 		RenderSurfaceMask mRenderTargetLoadMask;
 
 		UnorderedMap<VulkanResource*, ResourceUseHandle> mResources;
 		UnorderedMap<VulkanResource*, UINT32> mImages;
 		UnorderedMap<VulkanResource*, BufferInfo> mBuffers;
+		UnorderedSet<VulkanOcclusionQuery*> mOcclusionQueries;
+		UnorderedSet<VulkanTimerQuery*> mTimerQueries;
 		Vector<ImageInfo> mImageInfos;
-		Vector<ImageSubresourceInfo> mSubresourceInfos;
+		Vector<ImageSubresourceInfo> mSubresourceInfoStorage;
+		Set<UINT32> mPassTouchedSubresourceInfos; // All subresource infos touched by the current render pass
 		UINT32 mGlobalQueueIdx;
 
 		SPtr<VulkanGraphicsPipelineState> mGraphicsPipeline;

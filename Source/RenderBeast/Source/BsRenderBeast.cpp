@@ -12,7 +12,6 @@
 #include "BsRenderTarget.h"
 #include "BsRenderQueue.h"
 #include "BsCoreThread.h"
-#include "BsGpuParams.h"
 #include "BsProfilerCPU.h"
 #include "BsProfilerGPU.h"
 #include "BsShader.h"
@@ -21,9 +20,8 @@
 #include "BsRenderableElement.h"
 #include "BsCoreObjectManager.h"
 #include "BsRenderBeastOptions.h"
-#include "BsSamplerOverrides.h"
 #include "BsLight.h"
-#include "BsRenderTexturePool.h"
+#include "BsGpuResourcePool.h"
 #include "BsRenderTargets.h"
 #include "BsRendererUtility.h"
 #include "BsAnimationManager.h"
@@ -31,17 +29,25 @@
 #include "BsGpuBuffer.h"
 #include "BsGpuParamsSet.h"
 #include "BsRendererExtension.h"
-#include "BsReflectionCubemap.h"
-#include "BsMeshData.h"
+#include "BsLightProbeCache.h"
+#include "BsReflectionProbe.h"
+#include "BsIBLUtility.h"
+#include "BsLightGrid.h"
+#include "BsSkybox.h"
+#include "BsShadowRendering.h"
+#include "BsStandardDeferredLighting.h"
 
 using namespace std::placeholders;
 
 namespace bs { namespace ct
 {
+	// Limited by max number of array elements in texture for DX11 hardware
+	constexpr UINT32 MaxReflectionCubemaps = 2048 / 6;
+
 	RenderBeast::RenderBeast()
-		: mDefaultMaterial(nullptr), mTiledDeferredLightingMat(nullptr), mSkyboxMat(nullptr), mGPULightData(nullptr)
-		, mObjectRenderer(nullptr), mOptions(bs_shared_ptr_new<RenderBeastOptions>()), mOptionsDirty(true)
-	{ }
+	{
+		mOptions = bs_shared_ptr_new<RenderBeastOptions>();
+	}
 
 	const StringID& RenderBeast::getName() const
 	{
@@ -51,14 +57,14 @@ namespace bs { namespace ct
 
 	void RenderBeast::initialize()
 	{
-		CoreRenderer::initialize();
+		Renderer::initialize();
 
 		gCoreThread().queueCommand(std::bind(&RenderBeast::initializeCore, this), CTQF_InternalQueue);
 	}
 
 	void RenderBeast::destroy()
 	{
-		CoreRenderer::destroy();
+		Renderer::destroy();
 
 		gCoreThread().queueCommand(std::bind(&RenderBeast::destroyCore, this));
 		gCoreThread().submit(true);
@@ -68,17 +74,26 @@ namespace bs { namespace ct
 	{
 		RendererUtility::startUp();
 
-		mCoreOptions = bs_shared_ptr_new<RenderBeastOptions>();
+		mCoreOptions = bs_shared_ptr_new<RenderBeastOptions>(); 
+		mScene = bs_shared_ptr_new<RendererScene>(mCoreOptions);
 		mObjectRenderer = bs_new<ObjectRenderer>();
 
-		mDefaultMaterial = bs_new<DefaultMaterial>();
-		mTiledDeferredLightingMat = bs_new<TiledDeferredLightingMat>();
-		mSkyboxMat = bs_new<SkyboxMat>();
+		mSkyboxMat = bs_new<SkyboxMat<false>>();
+		mSkyboxSolidColorMat = bs_new<SkyboxMat<true>>();
+		mFlatFramebufferToTextureMat = bs_new<FlatFramebufferToTextureMat>();
 
-		mGPULightData = bs_new<GPULightData>();
+		mTiledDeferredLightingMats = bs_new<TiledDeferredLightingMaterials>();
+		mTileDeferredImageBasedLightingMats = bs_new<TiledDeferredImageBasedLightingMaterials>();
 
-		RenderTexturePool::startUp();
+		mPreintegratedEnvBRDF = TiledDeferredImageBasedLighting::generatePreintegratedEnvBRDF();
+		mVisibleLightInfo = bs_new<VisibleLightData>();
+		mVisibleReflProbeInfo = bs_new<VisibleReflProbeData>();
+		mLightGrid = bs_new<LightGrid>();
+
+		GpuResourcePool::startUp();
 		PostProcessing::startUp();
+		ShadowRendering::startUp(mCoreOptions->shadowMapSize);
+		StandardDeferred::startUp();
 	}
 
 	void RenderBeast::destroyCore()
@@ -86,349 +101,166 @@ namespace bs { namespace ct
 		if (mObjectRenderer != nullptr)
 			bs_delete(mObjectRenderer);
 
-		for (auto& entry : mRenderables)
-			bs_delete(entry);
+		mScene = nullptr;
 
-		for (auto& entry : mCameras)
-			bs_delete(entry.second);
+		mReflCubemapArrayTex = nullptr;
+		mSkyboxTexture = nullptr;
+		mSkyboxFilteredReflections = nullptr;
+		mSkyboxIrradiance = nullptr;
 
-		mRenderTargets.clear();
-		mCameras.clear();
-		mRenderables.clear();
-		mRenderableVisibility.clear();
-
+		StandardDeferred::shutDown();
+		ShadowRendering::shutDown();
 		PostProcessing::shutDown();
-		RenderTexturePool::shutDown();
+		GpuResourcePool::shutDown();
 
-		bs_delete(mDefaultMaterial);
-		bs_delete(mTiledDeferredLightingMat);
 		bs_delete(mSkyboxMat);
-		bs_delete(mGPULightData);
+		bs_delete(mSkyboxSolidColorMat);
+		bs_delete(mVisibleLightInfo);
+		bs_delete(mVisibleReflProbeInfo);
+		bs_delete(mLightGrid);
+		bs_delete(mFlatFramebufferToTextureMat);
+		bs_delete(mTiledDeferredLightingMats);
+		bs_delete(mTileDeferredImageBasedLightingMats);
+
+		mPreintegratedEnvBRDF = nullptr;
 
 		RendererUtility::shutDown();
-
-		assert(mSamplerOverrides.empty());
 	}
 
 	void RenderBeast::notifyRenderableAdded(Renderable* renderable)
 	{
-		UINT32 renderableId = (UINT32)mRenderables.size();
+		mScene->registerRenderable(renderable);
 
-		renderable->setRendererId(renderableId);
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
+		RendererObject* rendererObject = sceneInfo.renderables[renderable->getRendererId()];
 
-		mRenderables.push_back(bs_new<RendererObject>());
-		mRenderableCullInfos.push_back(CullInfo(renderable->getBounds(), renderable->getLayer()));
-		mRenderableVisibility.push_back(false);
-
-		RendererObject* rendererObject = mRenderables.back();
-		rendererObject->renderable = renderable;
-		rendererObject->updatePerObjectBuffer();
-
-		SPtr<Mesh> mesh = renderable->getMesh();
-		if (mesh != nullptr)
-		{
-			const MeshProperties& meshProps = mesh->getProperties();
-			SPtr<VertexDeclaration> vertexDecl = mesh->getVertexData()->vertexDeclaration;
-
-			for (UINT32 i = 0; i < meshProps.getNumSubMeshes(); i++)
-			{
-				rendererObject->elements.push_back(BeastRenderableElement());
-				BeastRenderableElement& renElement = rendererObject->elements.back();
-
-				renElement.mesh = mesh;
-				renElement.subMesh = meshProps.getSubMesh(i);
-				renElement.renderableId = renderableId;
-				renElement.animType = renderable->getAnimType();
-				renElement.animationId = renderable->getAnimationId();
-				renElement.morphShapeVersion = 0;
-				renElement.morphShapeBuffer = renderable->getMorphShapeBuffer();
-				renElement.boneMatrixBuffer = renderable->getBoneMatrixBuffer();
-				renElement.morphVertexDeclaration = renderable->getMorphVertexDeclaration();
-
-				renElement.material = renderable->getMaterial(i);
-				if (renElement.material == nullptr)
-					renElement.material = renderable->getMaterial(0);
-
-				if (renElement.material != nullptr && renElement.material->getShader() == nullptr)
-					renElement.material = nullptr;
-
-				// If no material use the default material
-				if (renElement.material == nullptr)
-					renElement.material = mDefaultMaterial->getMaterial();
-
-				// Determine which technique to use
-				static StringID techniqueIDLookup[4] = { StringID::NONE, RTag_Skinned, RTag_Morph, RTag_SkinnedMorph };
-				static_assert((UINT32)RenderableAnimType::Count == 4, "RenderableAnimType is expected to have four sequential entries.");
-				
-				UINT32 techniqueIdx = -1;
-				RenderableAnimType animType = renderable->getAnimType();
-				if(animType != RenderableAnimType::None)
-					techniqueIdx = renElement.material->findTechnique(techniqueIDLookup[(int)animType]);
-
-				if (techniqueIdx == (UINT32)-1)
-					techniqueIdx = renElement.material->getDefaultTechnique();
-
-				renElement.techniqueIdx = techniqueIdx;
-
-				// Validate mesh <-> shader vertex bindings
-				if (renElement.material != nullptr)
-				{
-					UINT32 numPasses = renElement.material->getNumPasses(techniqueIdx);
-					for (UINT32 j = 0; j < numPasses; j++)
-					{
-						SPtr<Pass> pass = renElement.material->getPass(j, techniqueIdx);
-
-						SPtr<VertexDeclaration> shaderDecl = pass->getVertexProgram()->getInputDeclaration();
-						if (!vertexDecl->isCompatible(shaderDecl))
-						{
-							Vector<VertexElement> missingElements = vertexDecl->getMissingElements(shaderDecl);
-
-							// If using morph shapes ignore POSITION1 and NORMAL1 missing since we assign them from within the renderer
-							if(animType == RenderableAnimType::Morph || animType == RenderableAnimType::SkinnedMorph)
-							{
-								auto removeIter = std::remove_if(missingElements.begin(), missingElements.end(), [](const VertexElement& x)
-								{
-									return (x.getSemantic() == VES_POSITION && x.getSemanticIdx() == 1) ||
-										(x.getSemantic() == VES_NORMAL && x.getSemanticIdx() == 1);
-								});
-
-								missingElements.erase(removeIter, missingElements.end());
-							}
-
-							if (!missingElements.empty())
-							{
-								StringStream wrnStream;
-								wrnStream << "Provided mesh is missing required vertex attributes to render with the provided shader. Missing elements: " << std::endl;
-
-								for (auto& entry : missingElements)
-									wrnStream << "\t" << toString(entry.getSemantic()) << entry.getSemanticIdx() << std::endl;
-
-								LOGWRN(wrnStream.str());
-								break;
-							}
-						}
-					}
-				}
-
-				// Generate or assigned renderer specific data for the material
-				renElement.params = renElement.material->createParamsSet(techniqueIdx);
-				renElement.material->updateParamsSet(renElement.params, true);
-
-				// Generate or assign sampler state overrides
-				SamplerOverrideKey samplerKey(renElement.material, techniqueIdx);
-				auto iterFind = mSamplerOverrides.find(samplerKey);
-				if (iterFind != mSamplerOverrides.end())
-				{
-					renElement.samplerOverrides = iterFind->second;
-					iterFind->second->refCount++;
-				}
-				else
-				{
-					SPtr<Shader> shader = renElement.material->getShader();
-					MaterialSamplerOverrides* samplerOverrides = SamplerOverrideUtility::generateSamplerOverrides(shader,
-						renElement.material->_getInternalParams(), renElement.params, mCoreOptions);
-
-					mSamplerOverrides[samplerKey] = samplerOverrides;
-
-					renElement.samplerOverrides = samplerOverrides;
-					samplerOverrides->refCount++;
-				}
-
-				mObjectRenderer->initElement(*rendererObject, renElement);
-			}
-		}
+		for(auto& entry : rendererObject->elements)
+			mObjectRenderer->initElement(*rendererObject, entry);
 	}
 
 	void RenderBeast::notifyRenderableRemoved(Renderable* renderable)
 	{
-		UINT32 renderableId = renderable->getRendererId();
-		Renderable* lastRenerable = mRenderables.back()->renderable;
-		UINT32 lastRenderableId = lastRenerable->getRendererId();
-
-		RendererObject* rendererObject = mRenderables[renderableId];
-		Vector<BeastRenderableElement>& elements = rendererObject->elements;
-		for (auto& element : elements)
-		{
-			SamplerOverrideKey samplerKey(element.material, element.techniqueIdx);
-
-			auto iterFind = mSamplerOverrides.find(samplerKey);
-			assert(iterFind != mSamplerOverrides.end());
-
-			MaterialSamplerOverrides* samplerOverrides = iterFind->second;
-			samplerOverrides->refCount--;
-			if (samplerOverrides->refCount == 0)
-			{
-				SamplerOverrideUtility::destroySamplerOverrides(samplerOverrides);
-				mSamplerOverrides.erase(iterFind);
-			}
-
-			element.samplerOverrides = nullptr;
-		}
-
-		if (renderableId != lastRenderableId)
-		{
-			// Swap current last element with the one we want to erase
-			std::swap(mRenderables[renderableId], mRenderables[lastRenderableId]);
-			std::swap(mRenderableCullInfos[renderableId], mRenderableCullInfos[lastRenderableId]);
-
-			lastRenerable->setRendererId(renderableId);
-
-			for (auto& element : elements)
-				element.renderableId = renderableId;
-		}
-
-		// Last element is the one we want to erase
-		mRenderables.erase(mRenderables.end() - 1);
-		mRenderableCullInfos.erase(mRenderableCullInfos.end() - 1);
-		mRenderableVisibility.erase(mRenderableVisibility.end() - 1);
-
-		bs_delete(rendererObject);
+		mScene->unregisterRenderable(renderable);
 	}
 
 	void RenderBeast::notifyRenderableUpdated(Renderable* renderable)
 	{
-		UINT32 renderableId = renderable->getRendererId();
-
-		mRenderables[renderableId]->updatePerObjectBuffer();
-		mRenderableCullInfos[renderableId].bounds = renderable->getBounds();
+		mScene->updateRenderable(renderable);
 	}
 
 	void RenderBeast::notifyLightAdded(Light* light)
 	{
-		if (light->getType() == LightType::Directional)
-		{
-			UINT32 lightId = (UINT32)mDirectionalLights.size();
-			light->setRendererId(lightId);
-
-			mDirectionalLights.push_back(RendererLight(light));
-		}
-		else
-		{
-			if (light->getType() == LightType::Point)
-			{
-				UINT32 lightId = (UINT32)mRadialLights.size();
-				light->setRendererId(lightId);
-
-				mRadialLights.push_back(RendererLight(light));
-				mPointLightWorldBounds.push_back(light->getBounds());
-			}
-			else // Spot
-			{
-				UINT32 lightId = (UINT32)mSpotLights.size();
-				light->setRendererId(lightId);
-
-				mSpotLights.push_back(RendererLight(light));
-				mSpotLightWorldBounds.push_back(light->getBounds());
-			}
-		}
+		mScene->registerLight(light);
 	}
 
 	void RenderBeast::notifyLightUpdated(Light* light)
 	{
-		UINT32 lightId = light->getRendererId();
-
-		if (light->getType() == LightType::Point)
-			mPointLightWorldBounds[lightId] = light->getBounds();
-		else if(light->getType() == LightType::Spot)
-			mSpotLightWorldBounds[lightId] = light->getBounds();
+		mScene->updateLight(light);
 	}
 
 	void RenderBeast::notifyLightRemoved(Light* light)
 	{
-		UINT32 lightId = light->getRendererId();
-		if (light->getType() == LightType::Directional)
+		mScene->unregisterLight(light);
+	}
+
+	void RenderBeast::notifyCameraAdded(Camera* camera)
+	{
+		mScene->registerCamera(camera);
+	}
+
+	void RenderBeast::notifyCameraUpdated(Camera* camera, UINT32 updateFlag)
+	{
+		mScene->updateCamera(camera, updateFlag);
+	}
+
+	void RenderBeast::notifyCameraRemoved(Camera* camera)
+	{
+		mScene->unregisterCamera(camera);
+	}
+
+	void RenderBeast::notifyReflectionProbeAdded(ReflectionProbe* probe)
+	{
+		mScene->registerReflectionProbe(probe);
+
+		// Find a spot in cubemap array
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
+
+		UINT32 probeId = probe->getRendererId();
+		const RendererReflectionProbe* probeInfo = &sceneInfo.reflProbes[probeId];
+
+		UINT32 numArrayEntries = (UINT32)mCubemapArrayUsedSlots.size();
+		for(UINT32 i = 0; i < numArrayEntries; i++)
 		{
-			Light* lastLight = mDirectionalLights.back().getInternal();
-			UINT32 lastLightId = lastLight->getRendererId();
-
-			if (lightId != lastLightId)
+			if(!mCubemapArrayUsedSlots[i])
 			{
-				// Swap current last element with the one we want to erase
-				std::swap(mDirectionalLights[lightId], mDirectionalLights[lastLightId]);
-				lastLight->setRendererId(lightId);
+				mScene->setReflectionProbeArrayIndex(probeId, i, false);
+				mCubemapArrayUsedSlots[i] = true;
+				break;
 			}
-
-			// Last element is the one we want to erase
-			mDirectionalLights.erase(mDirectionalLights.end() - 1);
 		}
-		else
+
+		// No empty slot was found
+		if (probeInfo->arrayIdx == -1)
 		{
-			if (light->getType() == LightType::Point)
-			{
-				Light* lastLight = mRadialLights.back().getInternal();
-				UINT32 lastLightId = lastLight->getRendererId();
+			mScene->setReflectionProbeArrayIndex(probeId, numArrayEntries, false);
+			mCubemapArrayUsedSlots.push_back(true);
+		}
 
-				if (lightId != lastLightId)
-				{
-					// Swap current last element with the one we want to erase
-					std::swap(mRadialLights[lightId], mRadialLights[lastLightId]);
-					std::swap(mPointLightWorldBounds[lightId], mPointLightWorldBounds[lastLightId]);
-
-					lastLight->setRendererId(lightId);
-				}
-
-				// Last element is the one we want to erase
-				mRadialLights.erase(mRadialLights.end() - 1);
-				mPointLightWorldBounds.erase(mPointLightWorldBounds.end() - 1);
-			}
-			else // Spot
-			{
-				Light* lastLight = mSpotLights.back().getInternal();
-				UINT32 lastLightId = lastLight->getRendererId();
-
-				if (lightId != lastLightId)
-				{
-					// Swap current last element with the one we want to erase
-					std::swap(mSpotLights[lightId], mSpotLights[lastLightId]);
-					std::swap(mSpotLightWorldBounds[lightId], mSpotLightWorldBounds[lastLightId]);
-
-					lastLight->setRendererId(lightId);
-				}
-
-				// Last element is the one we want to erase
-				mSpotLights.erase(mSpotLights.end() - 1);
-				mSpotLightWorldBounds.erase(mSpotLightWorldBounds.end() - 1);
-			}
+		if(probeInfo->arrayIdx > MaxReflectionCubemaps)
+		{
+			LOGERR("Reached the maximum number of allowed reflection probe cubemaps at once. "
+				"Ignoring reflection probe data.");
 		}
 	}
 
-	void RenderBeast::notifyCameraAdded(const Camera* camera)
+	void RenderBeast::notifyReflectionProbeUpdated(ReflectionProbe* probe)
 	{
-		RendererCamera* renCamera = updateCameraData(camera);
-		renCamera->updatePerViewBuffer();
+		mScene->updateReflectionProbe(probe);
 	}
 
-	void RenderBeast::notifyCameraUpdated(const Camera* camera, UINT32 updateFlag)
+	void RenderBeast::notifyReflectionProbeRemoved(ReflectionProbe* probe)
 	{
-		RendererCamera* rendererCam;
-		if((updateFlag & (UINT32)CameraDirtyFlag::Everything) != 0)
-		{
-			rendererCam = updateCameraData(camera);
-		}
-		else if((updateFlag & (UINT32)CameraDirtyFlag::PostProcess) != 0)
-		{
-			rendererCam = mCameras[camera];
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
 
-			rendererCam->setPostProcessSettings(camera->getPostProcessSettings());
-		}
-		else // Transform
-		{
-			rendererCam = mCameras[camera];
+		UINT32 probeId = probe->getRendererId();
+		UINT32 arrayIdx = sceneInfo.reflProbes[probeId].arrayIdx;
 
-			rendererCam->setTransform(
-				camera->getPosition(),
-				camera->getForward(),
-				camera->getViewMatrix(),
-				camera->getProjectionMatrixRS(),
-				camera->getWorldFrustum());
-		}
+		if (arrayIdx != -1)
+			mCubemapArrayUsedSlots[arrayIdx] = false;
 
-		rendererCam->updatePerViewBuffer();
+		mScene->unregisterReflectionProbe(probe);
 	}
 
-	void RenderBeast::notifyCameraRemoved(const Camera* camera)
+	void RenderBeast::notifySkyboxAdded(Skybox* skybox)
 	{
-		updateCameraData(camera, true);
+		mSkybox = skybox;
+
+		SPtr<Texture> skyTex = skybox->getTexture();
+		if (skyTex != nullptr && skyTex->getProperties().getTextureType() == TEX_TYPE_CUBE_MAP)
+			mSkyboxTexture = skyTex;
+
+		mSkyboxFilteredReflections = nullptr;
+		mSkyboxIrradiance = nullptr;
+	}
+
+	void RenderBeast::notifySkyboxTextureChanged(Skybox* skybox)
+	{
+		LightProbeCache::instance().notifyDirty(skybox->getUUID());
+
+		if (mSkybox == skybox)
+		{
+			mSkyboxTexture = skybox->getTexture();
+			mSkyboxFilteredReflections = nullptr;
+			mSkyboxIrradiance = nullptr;
+		}
+	}
+
+	void RenderBeast::notifySkyboxRemoved(Skybox* skybox)
+	{
+		LightProbeCache::instance().unloadCachedTexture(skybox->getUUID());
+
+		if (mSkybox == skybox)
+			mSkyboxTexture = nullptr;
 	}
 
 	SPtr<PostProcessSettings> RenderBeast::createPostProcessSettings() const
@@ -436,170 +268,13 @@ namespace bs { namespace ct
 		return bs_shared_ptr_new<StandardPostProcessSettings>();
 	}
 
-	RendererCamera* RenderBeast::updateCameraData(const Camera* camera, bool forceRemove)
-	{
-		RendererCamera* output;
-
-		SPtr<RenderTarget> renderTarget = camera->getViewport()->getTarget();
-
-		auto iterFind = mCameras.find(camera);
-		if(forceRemove)
-		{
-			if(iterFind != mCameras.end())
-			{
-				bs_delete(iterFind->second);
-				mCameras.erase(iterFind);
-			}
-
-			renderTarget = nullptr;
-			output = nullptr;
-		}
-		else
-		{
-			SPtr<Viewport> viewport = camera->getViewport();
-			RENDERER_VIEW_DESC viewDesc;
-
-			viewDesc.target.clearFlags = 0;
-			if (viewport->getRequiresColorClear())
-				viewDesc.target.clearFlags |= FBT_COLOR;
-
-			if (viewport->getRequiresDepthClear())
-				viewDesc.target.clearFlags |= FBT_DEPTH;
-
-			if (viewport->getRequiresStencilClear())
-				viewDesc.target.clearFlags |= FBT_STENCIL;
-
-			viewDesc.target.clearColor = viewport->getClearColor();
-			viewDesc.target.clearDepthValue = viewport->getClearDepthValue();
-			viewDesc.target.clearStencilValue = viewport->getClearStencilValue();
-
-			viewDesc.target.target = viewport->getTarget();
-			viewDesc.target.nrmViewRect = viewport->getNormArea();
-			viewDesc.target.viewRect = Rect2I(
-				viewport->getX(),
-				viewport->getY(),
-				(UINT32)viewport->getWidth(),
-				(UINT32)viewport->getHeight());
-
-			if (viewDesc.target.target != nullptr)
-			{
-				viewDesc.target.targetWidth = viewDesc.target.target->getProperties().getWidth();
-				viewDesc.target.targetHeight = viewDesc.target.target->getProperties().getHeight();
-			}
-			else
-			{
-				viewDesc.target.targetWidth = 0;
-				viewDesc.target.targetHeight = 0;
-			}
-
-			viewDesc.target.numSamples = camera->getMSAACount();
-
-			viewDesc.isOverlay = camera->getFlags().isSet(CameraFlag::Overlay);
-			viewDesc.isHDR = camera->getFlags().isSet(CameraFlag::HDR);
-			viewDesc.triggerCallbacks = true;
-			viewDesc.runPostProcessing = true;
-
-			viewDesc.cullFrustum = camera->getWorldFrustum();
-			viewDesc.visibleLayers = camera->getLayers();
-			viewDesc.nearPlane = camera->getNearClipDistance();
-			viewDesc.farPlane = camera->getFarClipDistance();
-			viewDesc.flipView = false;
-
-			viewDesc.viewOrigin = camera->getPosition();
-			viewDesc.viewDirection = camera->getForward();
-			viewDesc.projTransform = camera->getProjectionMatrixRS();
-			viewDesc.viewTransform = camera->getViewMatrix();
-
-			viewDesc.stateReduction = mCoreOptions->stateReductionMode;
-			viewDesc.skyboxTexture = camera->getSkybox();
-			viewDesc.sceneCamera = camera;
-
-			if (iterFind != mCameras.end())
-			{
-				output = iterFind->second;
-				output->setView(viewDesc);
-			}
-			else
-			{
-				output = bs_new<RendererCamera>(viewDesc);
-				mCameras[camera] = output;
-			}
-
-			output->setPostProcessSettings(camera->getPostProcessSettings());
-		}
-
-		// Remove from render target list
-		int rtChanged = 0; // 0 - No RT, 1 - RT found, 2 - RT changed
-		for (auto iterTarget = mRenderTargets.begin(); iterTarget != mRenderTargets.end(); ++iterTarget)
-		{
-			RendererRenderTarget& target = *iterTarget;
-			for (auto iterCam = target.cameras.begin(); iterCam != target.cameras.end(); ++iterCam)
-			{
-				if (camera == *iterCam)
-				{
-					if (renderTarget != target.target)
-					{
-						target.cameras.erase(iterCam);
-						rtChanged = 2;
-
-					}
-					else
-						rtChanged = 1;
-
-					break;
-				}
-			}
-
-			if (target.cameras.empty())
-			{
-				mRenderTargets.erase(iterTarget);
-				break;
-			}
-		}
-
-		// Register in render target list
-		if (renderTarget != nullptr && (rtChanged == 0 || rtChanged == 2))
-		{
-			auto findIter = std::find_if(mRenderTargets.begin(), mRenderTargets.end(),
-				[&](const RendererRenderTarget& x) { return x.target == renderTarget; });
-
-			if (findIter != mRenderTargets.end())
-			{
-				findIter->cameras.push_back(camera);
-			}
-			else
-			{
-				mRenderTargets.push_back(RendererRenderTarget());
-				RendererRenderTarget& renderTargetData = mRenderTargets.back();
-
-				renderTargetData.target = renderTarget;
-				renderTargetData.cameras.push_back(camera);
-			}
-
-			// Sort render targets based on priority
-			auto cameraComparer = [&](const Camera* a, const Camera* b) { return a->getPriority() > b->getPriority(); };
-			auto renderTargetInfoComparer = [&](const RendererRenderTarget& a, const RendererRenderTarget& b)
-			{ return a.target->getProperties().getPriority() > b.target->getProperties().getPriority(); };
-			std::sort(begin(mRenderTargets), end(mRenderTargets), renderTargetInfoComparer);
-
-			for (auto& camerasPerTarget : mRenderTargets)
-			{
-				Vector<const Camera*>& cameras = camerasPerTarget.cameras;
-
-				std::sort(begin(cameras), end(cameras), cameraComparer);
-			}
-		}
-
-		return output;
-	}
-
-	void RenderBeast::setOptions(const SPtr<CoreRendererOptions>& options)
+	void RenderBeast::setOptions(const SPtr<RendererOptions>& options)
 	{
 		mOptions = std::static_pointer_cast<RenderBeastOptions>(options);
 		mOptionsDirty = true;
 	}
 
-	SPtr<CoreRendererOptions> RenderBeast::getOptions() const
+	SPtr<RendererOptions> RenderBeast::getOptions() const
 	{
 		return mOptions;
 	}
@@ -611,15 +286,12 @@ namespace bs { namespace ct
 			filteringChanged |= mCoreOptions->anisotropyMax != options.anisotropyMax;
 
 		if (filteringChanged)
-			refreshSamplerOverrides(true);
+			mScene->refreshSamplerOverrides(true);
 
 		*mCoreOptions = options;
 
-		for (auto& entry : mCameras)
-		{
-			RendererCamera* rendererCam = entry.second;
-			rendererCam->setStateReductionMode(mCoreOptions->stateReductionMode);
-		}
+		mScene->setOptions(mCoreOptions);
+		ShadowRendering::instance().setShadowMapSize(mCoreOptions->shadowMapSize);
 	}
 
 	void RenderBeast::renderAll() 
@@ -636,8 +308,6 @@ namespace bs { namespace ct
 		gCoreThread().queueCommand(std::bind(&RenderBeast::renderAllCore, this, gTime().getTime(), gTime().getFrameDelta()));
 	}
 
-	static SPtr<Texture> dbgSkyTex;
-
 	void RenderBeast::renderAllCore(float time, float delta)
 	{
 		THROW_IF_NOT_CORE_THREAD;
@@ -645,10 +315,12 @@ namespace bs { namespace ct
 		gProfilerGPU().beginFrame();
 		gProfilerCPU().beginSample("renderAllCore");
 
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
+
 		// Note: I'm iterating over all sampler states every frame. If this ends up being a performance
 		// issue consider handling this internally in ct::Material which can only do it when sampler states
 		// are actually modified after sync
-		refreshSamplerOverrides();
+		mScene->refreshSamplerOverrides();
 
 		// Update global per-frame hardware buffers
 		mObjectRenderer->setParamFrameParams(time);
@@ -657,33 +329,43 @@ namespace bs { namespace ct
 		AnimationManager::instance().waitUntilComplete();
 		const RendererAnimationData& animData = AnimationManager::instance().getRendererData();
 		
+		sceneInfo.renderableReady.resize(sceneInfo.renderables.size(), false);
+		sceneInfo.renderableReady.assign(sceneInfo.renderables.size(), false);
+		
 		FrameInfo frameInfo(delta, animData);
 
-		//if (dbgSkyTex == nullptr)
-		//	dbgSkyTex = captureSceneCubeMap(Vector3(0, 2, 0), true, 1024, frameInfo);
-
 		// Gather all views
-		Vector<RendererCamera*> views;
-		for (auto& rtInfo : mRenderTargets)
+		Vector<RendererView*> views;
+		for (auto& rtInfo : sceneInfo.renderTargets)
 		{
 			SPtr<RenderTarget> target = rtInfo.target;
-			Vector<const Camera*>& cameras = rtInfo.cameras;
+			const Vector<Camera*>& cameras = rtInfo.cameras;
 
 			UINT32 numCameras = (UINT32)cameras.size();
 			for (UINT32 i = 0; i < numCameras; i++)
 			{
-				RendererCamera* viewInfo = mCameras[cameras[i]];
+				UINT32 viewIdx = sceneInfo.cameraToView.at(cameras[i]);
+				RendererView* viewInfo = sceneInfo.views[viewIdx];
 				views.push_back(viewInfo);
 			}
 		}
 
+		mMainViewGroup.setViews(views.data(), (UINT32)views.size());
+		mMainViewGroup.determineVisibility(sceneInfo);
+
+		// Render shadow maps
+		ShadowRendering::instance().renderShadowMaps(*mScene, mMainViewGroup, frameInfo);
+
+		// Update reflection probes
+		updateLightProbes(frameInfo);
+
 		// Render everything
-		renderViews(views.data(), (UINT32)views.size(), frameInfo);
+		renderViews(mMainViewGroup, frameInfo);
 
 		gProfilerGPU().endFrame();
 
 		// Present render targets with back buffers
-		for (auto& rtInfo : mRenderTargets)
+		for (auto& rtInfo : sceneInfo.renderTargets)
 		{
 			if(rtInfo.target->getProperties().isWindow())
 				RenderAPI::instance().swapBuffers(rtInfo.target);
@@ -692,135 +374,146 @@ namespace bs { namespace ct
 		gProfilerCPU().endSample("renderAllCore");
 	}
 
-	void RenderBeast::renderViews(RendererCamera** views, UINT32 numViews, const FrameInfo& frameInfo)
+	void RenderBeast::renderViews(const RendererViewGroup& viewGroup, const FrameInfo& frameInfo)
 	{
-		// Generate render queues per camera
-		mRenderableVisibility.assign(mRenderableVisibility.size(), false);
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
+		const VisibilityInfo& visibility = viewGroup.getVisibilityInfo();
 
-		for(UINT32 i = 0; i < numViews; i++)
-			views[i]->determineVisible(mRenderables, mRenderableCullInfos, &mRenderableVisibility);
+		// Update GPU light data
+		mVisibleLightInfo->update(sceneInfo, viewGroup);
 
-		// Generate a list of lights and their GPU buffers
-		UINT32 numDirLights = (UINT32)mDirectionalLights.size();
-		for (UINT32 i = 0; i < numDirLights; i++)
-		{
-			mLightDataTemp.push_back(LightData());
-			mDirectionalLights[i].getParameters(mLightDataTemp.back());
-		}
-
-		UINT32 numRadialLights = (UINT32)mRadialLights.size();
-		mLightVisibilityTemp.resize(numRadialLights, false);
-		for (UINT32 i = 0; i < numViews; i++)
-			views[i]->calculateVisibility(mPointLightWorldBounds, mLightVisibilityTemp);
-
-		for(UINT32 i = 0; i < numRadialLights; i++)
-		{
-			if (!mLightVisibilityTemp[i])
-				continue;
-
-			mLightDataTemp.push_back(LightData());
-			mRadialLights[i].getParameters(mLightDataTemp.back());
-		}
-
-		UINT32 numSpotLights = (UINT32)mSpotLights.size();
-		mLightVisibilityTemp.resize(numSpotLights, false);
-		for (UINT32 i = 0; i < numViews; i++)
-			views[i]->calculateVisibility(mSpotLightWorldBounds, mLightVisibilityTemp);
-
-		for (UINT32 i = 0; i < numSpotLights; i++)
-		{
-			if (!mLightVisibilityTemp[i])
-				continue;
-
-			mLightDataTemp.push_back(LightData());
-			mSpotLights[i].getParameters(mLightDataTemp.back());
-		}
-
-		mGPULightData->setLights(mLightDataTemp, numDirLights, numRadialLights, numSpotLights);
-
-		mLightDataTemp.clear();
-		mLightVisibilityTemp.clear();
-
-		mTiledDeferredLightingMat->setLights(*mGPULightData);
+		// Update reflection probe data
+		mVisibleReflProbeInfo->update(sceneInfo, viewGroup);
 
 		// Update various buffers required by each renderable
-		UINT32 numRenderables = (UINT32)mRenderables.size();
-		for (UINT32 i = 0; i < numRenderables; i++)
-		{
-			if (!mRenderableVisibility[i])
-				continue;
-
-			// Note: Before uploading bone matrices perhaps check if they has actually been changed since last frame
-			mRenderables[i]->renderable->updateAnimationBuffers(frameInfo.animData);
-
-			// Note: Could this step be moved in notifyRenderableUpdated, so it only triggers when material actually gets
-			// changed? Although it shouldn't matter much because if the internal versions keeping track of dirty params.
-			for (auto& element : mRenderables[i]->elements)
-			{
-				bool isTransparent = (element.material->getShader()->getFlags() & (UINT32)ShaderFlags::Transparent) != 0;
-				if(isTransparent)
-				{
-					
-				}
-
-				element.material->updateParamsSet(element.params);
-			}
-
-			mRenderables[i]->perObjectParamBuffer->flushToGPU();
-		}
-
-		for (UINT32 i = 0; i < numViews; i++)
-		{
-			if (views[i]->isOverlay())
-				renderOverlay(views[i]);
-			else
-				renderView(views[i], frameInfo.timeDelta);
-		}
-	}
-
-	void RenderBeast::renderView(RendererCamera* viewInfo, float frameDelta)
-	{
-		gProfilerCPU().beginSample("Render");
-
-		const Camera* sceneCamera = viewInfo->getSceneCamera();
-
-		SPtr<GpuParamBlockBuffer> perCameraBuffer = viewInfo->getPerViewBuffer();
-		perCameraBuffer->flushToGPU();
-
-		Matrix4 viewProj = viewInfo->getViewProjMatrix();
-
-		// Assign camera and per-call data to all relevant renderables
-		const VisibilityInfo& visibility = viewInfo->getVisibilityMasks();
-		UINT32 numRenderables = (UINT32)mRenderables.size();
+		UINT32 numRenderables = (UINT32)sceneInfo.renderables.size();
 		for (UINT32 i = 0; i < numRenderables; i++)
 		{
 			if (!visibility.renderables[i])
 				continue;
 
-			RendererObject* rendererObject = mRenderables[i];
-			rendererObject->updatePerCallBuffer(viewProj);
+			mScene->prepareRenderable(i, frameInfo);
+		}
 
-			for (auto& element : mRenderables[i]->elements)
+		UINT32 numViews = viewGroup.getNumViews();
+		for (UINT32 i = 0; i < numViews; i++)
+		{
+			RendererView* view = viewGroup.getView(i);
+
+			if (view->getProperties().isOverlay)
+				renderOverlay(view);
+			else
+				renderView(view, frameInfo.timeDelta);
+		}
+	}
+
+	void RenderBeast::renderView(RendererView* viewInfo, float frameDelta)
+	{
+		gProfilerCPU().beginSample("Render");
+
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
+		auto& viewProps = viewInfo->getProperties();
+		const Camera* sceneCamera = viewInfo->getSceneCamera();
+
+		SPtr<GpuParamBlockBuffer> perCameraBuffer = viewInfo->getPerViewBuffer();
+		perCameraBuffer->flushToGPU();
+
+		Matrix4 viewProj = viewProps.viewProjTransform;
+		UINT32 numSamples = viewProps.numSamples;
+
+		bool allowShadows = !viewProps.noShadows;
+		if(allowShadows)
+		{
+			if(sceneCamera == nullptr)
 			{
-				if (element.perCameraBindingIdx != -1)
-					element.params->setParamBlockBuffer(element.perCameraBindingIdx, perCameraBuffer, true);
-
-				if (element.lightParamsBindingIdx != -1)
-					element.params->setParamBlockBuffer(element.lightParamsBindingIdx, mGPULightData->getParamBuffer(), true);
-
-				element.lightsBufferParam.set(mGPULightData->getLightBuffer());
+				// Note: In order to support shadows on non-scene views I'd need to be aware of what those views are before
+				// rendering, in order to properly generate shadow maps. 
+				LOGWRN("Shadows are currently not supported on non-scene views. Disabling shadow rendering.");
+				allowShadows = false;
 			}
 		}
 
 		viewInfo->beginRendering(true);
 
+		// Prepare light grid required for transparent object rendering
+		mLightGrid->updateGrid(*viewInfo, *mVisibleLightInfo, *mVisibleReflProbeInfo, viewProps.noLighting);
+
+		SPtr<GpuParamBlockBuffer> gridParams;
+		SPtr<GpuBuffer> gridLightOffsetsAndSize, gridLightIndices;
+		SPtr<GpuBuffer> gridProbeOffsetsAndSize, gridProbeIndices;
+		mLightGrid->getOutputs(gridLightOffsetsAndSize, gridLightIndices, gridProbeOffsetsAndSize, gridProbeIndices, 
+			gridParams);
+
+		// Prepare image based material and its param buffer
+		ITiledDeferredImageBasedLightingMat* imageBasedLightingMat =
+			mTileDeferredImageBasedLightingMats->get(numSamples);
+
+		imageBasedLightingMat->setReflectionProbes(*mVisibleReflProbeInfo, mReflCubemapArrayTex, viewProps.renderingReflections);
+
+		float skyBrightness = 1.0f;
+		if (mSkybox != nullptr)
+			skyBrightness = mSkybox->getBrightness();
+
+		imageBasedLightingMat->setSky(mSkyboxFilteredReflections, mSkyboxIrradiance, skyBrightness);
+
+		// Assign camera and per-call data to all relevant renderables
+		const VisibilityInfo& visibility = viewInfo->getVisibilityMasks();
+		UINT32 numRenderables = (UINT32)sceneInfo.renderables.size();
+		SPtr<GpuParamBlockBuffer> reflParamBuffer = imageBasedLightingMat->getReflectionsParamBuffer();
+		SPtr<SamplerState> reflSamplerState = imageBasedLightingMat->getReflectionsSamplerState();
+		for (UINT32 i = 0; i < numRenderables; i++)
+		{
+			if (!visibility.renderables[i])
+				continue;
+
+			RendererObject* rendererObject = sceneInfo.renderables[i];
+			rendererObject->updatePerCallBuffer(viewProj);
+
+			for (auto& element : sceneInfo.renderables[i]->elements)
+			{
+				if (element.perCameraBindingIdx != -1)
+					element.params->setParamBlockBuffer(element.perCameraBindingIdx, perCameraBuffer, true);
+
+				// Everything below is required only for forward rendering (ATM only used for transparent objects)
+				// Note: It would be nice to be able to set this once and keep it, only updating if the buffers actually
+				// change (e.g. when growing). Although technically the internal systems should be smart enough to
+				// avoid updates unless objects actually changed.
+				if (element.gridParamsBindingIdx != -1)
+					element.params->setParamBlockBuffer(element.gridParamsBindingIdx, gridParams, true);
+
+				element.gridLightOffsetsAndSizeParam.set(gridLightOffsetsAndSize);
+				element.gridLightIndicesParam.set(gridLightIndices);
+				element.lightsBufferParam.set(mVisibleLightInfo->getLightBuffer());
+
+				// Image based lighting params
+				ImageBasedLightingParams& iblParams = element.imageBasedParams;
+				if (iblParams.reflProbeParamsBindingIdx != -1)
+					element.params->setParamBlockBuffer(iblParams.reflProbeParamsBindingIdx, reflParamBuffer);
+
+				element.gridProbeOffsetsAndSizeParam.set(gridProbeOffsetsAndSize);
+
+				iblParams.reflectionProbeIndicesParam.set(gridProbeIndices);
+				iblParams.reflectionProbesParam.set(mVisibleReflProbeInfo->getProbeBuffer());
+
+				iblParams.skyReflectionsTexParam.set(mSkyboxFilteredReflections);
+				iblParams.skyIrradianceTexParam.set(mSkyboxIrradiance);
+
+				iblParams.reflectionProbeCubemapsTexParam.set(mReflCubemapArrayTex);
+				iblParams.preintegratedEnvBRDFParam.set(mPreintegratedEnvBRDF);
+
+				iblParams.reflectionProbeCubemapsSampParam.set(reflSamplerState);
+				iblParams.skyReflectionsSampParam.set(reflSamplerState);
+			}
+		}
+
 		SPtr<RenderTargets> renderTargets = viewInfo->getRenderTargets();
+		renderTargets->allocate(RTT_GBuffer);
 		renderTargets->bindGBuffer();
 
 		// Trigger pre-base-pass callbacks
 		auto iterRenderCallback = mCallbacks.begin();
 
-		if (viewInfo->checkTriggerCallbacks())
+		if (viewProps.triggerCallbacks)
 		{
 			while (iterRenderCallback != mCallbacks.end())
 			{
@@ -843,8 +536,12 @@ namespace bs { namespace ct
 			renderElement(*renderElem, iter->passIdx, iter->applyPass, viewProj);
 		}
 
+		// Build HiZ buffer
+		// TODO - Avoid generating it unless it actually gets used in some system
+		renderTargets->generateHiZ();
+
 		// Trigger post-base-pass callbacks
-		if (viewInfo->checkTriggerCallbacks())
+		if (viewProps.triggerCallbacks)
 		{
 			while (iterRenderCallback != mCallbacks.end())
 			{
@@ -859,26 +556,99 @@ namespace bs { namespace ct
 			}
 		}
 
+		RenderAPI& rapi = RenderAPI::instance();
+		rapi.setRenderTarget(nullptr);
+
+		// Accumulate all direct lighting into the light accumulation texture
+		renderTargets->allocate(RTT_LightAccumulation);
+
+		// Render non-shadowed lights into light accumulation texture (or buffer if MSAA)
+		ITiledDeferredLightingMat* lightingMat = mTiledDeferredLightingMats->get(numSamples);
+		lightingMat->setLights(*mVisibleLightInfo);
+		lightingMat->execute(renderTargets, perCameraBuffer, viewProps.noLighting, !allowShadows);
+
+		// If we're using flattened accumulation buffer for MSAA we need to copy its contents to the MSAA texture before
+		// continuing
+		bool isMSAA = numSamples > 1;
+		if(isMSAA)
+		{
+			renderTargets->bindLightAccumulation();
+			mFlatFramebufferToTextureMat->execute(renderTargets->getLightAccumulationBuffer(), 
+				renderTargets->getLightAccumulation());
+		}
+
+		// Render shadowed lights into light accumulation texture, using standard deferred
+		if (allowShadows)
+		{
+			renderTargets->allocate(RTT_LightOcclusion);
+
+			UINT32 viewIdx = sceneCamera->getRendererId();
+
+			for(UINT32 i = 0; i < (UINT32)LightType::Count; i++)
+			{
+				LightType lightType = (LightType)i;
+
+				auto& lights = mVisibleLightInfo->getLights(lightType);
+				UINT32 count = mVisibleLightInfo->getNumShadowedLights(lightType);
+				UINT32 offset = mVisibleLightInfo->getNumUnshadowedLights(lightType);
+
+				for (UINT32 j = 0; j < count; j++)
+				{
+					renderTargets->bindLightOcclusion();
+
+					UINT32 lightIdx = offset + j;
+					const RendererLight& light = *lights[lightIdx];
+					ShadowRendering::instance().renderShadowOcclusion(*mScene, mCoreOptions->shadowFilteringQuality,
+						light, viewIdx);
+
+					renderTargets->bindLightAccumulation();
+					StandardDeferred::instance().renderLight(lightType, light, *viewInfo, *renderTargets);
+				}
+			}
+
+			renderTargets->release(RTT_LightOcclusion);
+		}
+
+		// Make sure light accumulation buffer isn't bound and can be read from
+		rapi.setRenderTarget(nullptr);
+
+		// Render image based lighting, add it to light accumulation and output scene color
+		renderTargets->allocate(RTT_SceneColor);
+		imageBasedLightingMat->execute(renderTargets, perCameraBuffer, mPreintegratedEnvBRDF);
+
+		renderTargets->release(RTT_LightAccumulation);
+		renderTargets->release(RTT_GBuffer);
+
 		renderTargets->bindSceneColor(true);
 
-		// Render light pass
-		mTiledDeferredLightingMat->execute(renderTargets, perCameraBuffer);
+		// If we're using flattened framebuffer for MSAA we need to copy its contents to the MSAA scene texture before
+		// continuing
+		if(isMSAA)
+			mFlatFramebufferToTextureMat->execute(renderTargets->getSceneColorBuffer(), renderTargets->getSceneColor());
 
 		// Render skybox (if any)
-		SPtr<Texture> skyTexture = viewInfo->getSkybox();
-		if (skyTexture != nullptr && skyTexture->getProperties().getTextureType() == TEX_TYPE_CUBE_MAP)
-		//if (dbgSkyTex != nullptr)
+		if (mSkyboxTexture != nullptr)
 		{
 			mSkyboxMat->bind(perCameraBuffer);
-			mSkyboxMat->setParams(skyTexture);
-
-			SPtr<Mesh> mesh = gRendererUtility().getSkyBoxMesh();
-			gRendererUtility().draw(mesh, mesh->getProperties().getSubMesh(0));
+			mSkyboxMat->setParams(mSkyboxTexture, Color::White);
 		}
+		else
+		{
+			Color clearColor = viewProps.clearColor;
+
+			mSkyboxSolidColorMat->bind(perCameraBuffer);
+			mSkyboxSolidColorMat->setParams(nullptr, clearColor);
+		}
+
+		SPtr<Mesh> mesh = gRendererUtility().getSkyBoxMesh();
+		gRendererUtility().draw(mesh, mesh->getProperties().getSubMesh(0));
 
 		renderTargets->bindSceneColor(false);
 
 		// Render transparent objects
+		// TODO: Transparent objects cannot receive shadows. In order to support this I'd have to render the light occlusion
+		// for all lights affecting this object into a single (or a few) textures. I can likely use texture arrays for this,
+		// or to avoid sampling many textures, perhaps just jam it all in one or few texture channels. 
 		const Vector<RenderQueueElement>& transparentElements = viewInfo->getTransparentQueue()->getSortedElements();
 		for (auto iter = transparentElements.begin(); iter != transparentElements.end(); ++iter)
 		{
@@ -887,7 +657,7 @@ namespace bs { namespace ct
 		}
 
 		// Trigger post-light-pass callbacks
-		if (viewInfo->checkTriggerCallbacks())
+		if (viewProps.triggerCallbacks)
 		{
 			while (iterRenderCallback != mCallbacks.end())
 			{
@@ -903,27 +673,30 @@ namespace bs { namespace ct
 		}
 
 		// Post-processing and final resolve
-		if (viewInfo->checkRunPostProcessing())
+		Rect2 viewportArea = viewProps.nrmViewRect;
+
+		if (viewProps.runPostProcessing)
 		{
-			// TODO - If GBuffer has multiple samples, I should resolve them before post-processing
-			PostProcessing::instance().postProcess(viewInfo, renderTargets->getSceneColorRT(), frameDelta);
+			// Post-processing code also takes care of writting to the final output target
+			PostProcessing::instance().postProcess(viewInfo, renderTargets, frameDelta);
 		}
 		else
 		{
 			// Just copy from scene color to output if no post-processing
-			RenderAPI& rapi = RenderAPI::instance();
-			SPtr<RenderTarget> target = viewInfo->getFinalTarget();
-			Rect2 viewportArea = viewInfo->getViewportRect();
+			SPtr<RenderTarget> target = viewProps.target;
 
 			rapi.setRenderTarget(target);
 			rapi.setViewport(viewportArea);
 
-			SPtr<Texture> sceneColor = renderTargets->getSceneColorRT()->getColorTexture(0);
-			gRendererUtility().blit(sceneColor, Rect2I::EMPTY, viewInfo->getFlipView());
+			SPtr<Texture> sceneColor = renderTargets->getSceneColor();
+			gRendererUtility().blit(sceneColor, Rect2I::EMPTY, viewProps.flipView);
 		}
 
+		renderTargets->releaseHiZ();
+		renderTargets->release(RTT_SceneColor);
+
 		// Trigger overlay callbacks
-		if (viewInfo->checkTriggerCallbacks())
+		if (viewProps.triggerCallbacks)
 		{
 			while (iterRenderCallback != mCallbacks.end())
 			{
@@ -943,15 +716,16 @@ namespace bs { namespace ct
 		gProfilerCPU().endSample("Render");
 	}
 
-	void RenderBeast::renderOverlay(RendererCamera* viewInfo)
+	void RenderBeast::renderOverlay(RendererView* viewInfo)
 	{
 		gProfilerCPU().beginSample("RenderOverlay");
 
 		viewInfo->getPerViewBuffer()->flushToGPU();
 		viewInfo->beginRendering(false);
 
+		auto& viewProps = viewInfo->getProperties();
 		const Camera* camera = viewInfo->getSceneCamera();
-		SPtr<RenderTarget> target = viewInfo->getFinalTarget();
+		SPtr<RenderTarget> target = viewProps.target;
 		SPtr<Viewport> viewport = camera->getViewport();
 
 		UINT32 clearBuffers = 0;
@@ -971,7 +745,7 @@ namespace bs { namespace ct
 				viewport->getClearDepthValue(), viewport->getClearStencilValue());
 		}
 		else
-			RenderAPI::instance().setRenderTarget(target, false, RT_COLOR0);
+			RenderAPI::instance().setRenderTarget(target, 0, RT_COLOR0);
 
 		RenderAPI::instance().setViewport(viewport->getNormArea());
 
@@ -1014,18 +788,164 @@ namespace bs { namespace ct
 				element.morphVertexDeclaration);
 	}
 
-	SPtr<Texture> RenderBeast::captureSceneCubeMap(const Vector3& position, bool hdr, UINT32 size, 
-												   const FrameInfo& frameInfo)
+	void RenderBeast::updateLightProbes(const FrameInfo& frameInfo)
 	{
-		TEXTURE_DESC cubeMapDesc;
-		cubeMapDesc.type = TEX_TYPE_CUBE_MAP;
-		cubeMapDesc.format = hdr ? PF_FLOAT16_RGBA : PF_R8G8B8A8;
-		cubeMapDesc.width = size;
-		cubeMapDesc.height = size;
-		cubeMapDesc.numMips = PixelUtil::getMaxMipmaps(size, size, 1, cubeMapDesc.format);
-		cubeMapDesc.usage = TU_RENDERTARGET;
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
+		UINT32 numProbes = (UINT32)sceneInfo.reflProbes.size();
 
-		SPtr<Texture> cubemap = Texture::create(cubeMapDesc);
+		bs_frame_mark();
+		{		
+			UINT32 currentCubeArraySize = 0;
+
+			if(mReflCubemapArrayTex != nullptr)
+				mReflCubemapArrayTex->getProperties().getNumArraySlices();
+
+			bool forceArrayUpdate = false;
+			if(mReflCubemapArrayTex == nullptr || (currentCubeArraySize < numProbes && currentCubeArraySize != MaxReflectionCubemaps))
+			{
+				TEXTURE_DESC cubeMapDesc;
+				cubeMapDesc.type = TEX_TYPE_CUBE_MAP;
+				cubeMapDesc.format = PF_FLOAT_R11G11B10;
+				cubeMapDesc.width = IBLUtility::REFLECTION_CUBEMAP_SIZE;
+				cubeMapDesc.height = IBLUtility::REFLECTION_CUBEMAP_SIZE;
+				cubeMapDesc.numMips = PixelUtil::getMaxMipmaps(cubeMapDesc.width, cubeMapDesc.height, 1, cubeMapDesc.format);
+				cubeMapDesc.numArraySlices = std::min(MaxReflectionCubemaps, numProbes + 4); // Keep a few empty entries
+
+				mReflCubemapArrayTex = Texture::create(cubeMapDesc);
+
+				forceArrayUpdate = true;
+			}
+
+			auto& cubemapArrayProps = mReflCubemapArrayTex->getProperties();
+
+			TEXTURE_DESC cubemapDesc;
+			cubemapDesc.type = TEX_TYPE_CUBE_MAP;
+			cubemapDesc.format = PF_FLOAT_R11G11B10;
+			cubemapDesc.width = IBLUtility::REFLECTION_CUBEMAP_SIZE;
+			cubemapDesc.height = IBLUtility::REFLECTION_CUBEMAP_SIZE;
+			cubemapDesc.numMips = PixelUtil::getMaxMipmaps(cubemapDesc.width, cubemapDesc.height, 1, cubemapDesc.format);
+			cubemapDesc.usage = TU_STATIC | TU_RENDERTARGET;
+
+			SPtr<Texture> scratchCubemap;
+			if (numProbes > 0)
+				scratchCubemap = Texture::create(cubemapDesc);
+
+			FrameQueue<UINT32> emptySlots;
+			for (UINT32 i = 0; i < numProbes; i++)
+			{
+				const RendererReflectionProbe& probeInfo = sceneInfo.reflProbes[i];
+
+				if (probeInfo.arrayIdx > MaxReflectionCubemaps)
+					continue;
+
+				SPtr<Texture> texture = probeInfo.texture;
+				if (texture == nullptr)
+					texture = LightProbeCache::instance().getCachedRadianceTexture(probeInfo.probe->getUUID());
+
+				if (texture == nullptr || probeInfo.textureDirty)
+				{
+					texture = Texture::create(cubemapDesc);
+
+					if (!probeInfo.customTexture)
+						captureSceneCubeMap(texture, probeInfo.probe->getPosition(), true, frameInfo);
+					else
+					{
+						SPtr<Texture> customTexture = probeInfo.probe->getCustomTexture();
+						IBLUtility::scaleCubemap(customTexture, 0, texture, 0);
+					}
+
+					IBLUtility::filterCubemapForSpecular(texture, scratchCubemap);
+					LightProbeCache::instance().setCachedRadianceTexture(probeInfo.probe->getUUID(), texture);
+				}
+
+				mScene->setReflectionProbeTexture(i, texture);
+
+				if(probeInfo.arrayDirty || forceArrayUpdate)
+				{
+					auto& srcProps = probeInfo.texture->getProperties();
+					bool isValid = srcProps.getWidth() == IBLUtility::REFLECTION_CUBEMAP_SIZE && 
+						srcProps.getHeight() == IBLUtility::REFLECTION_CUBEMAP_SIZE &&
+						srcProps.getNumMipmaps() == cubemapArrayProps.getNumMipmaps() &&
+						srcProps.getTextureType() == TEX_TYPE_CUBE_MAP;
+
+					if(!isValid)
+					{
+						if (!probeInfo.errorFlagged)
+						{
+							String errMsg = StringUtil::format("Cubemap texture invalid to use as a reflection cubemap. " 
+								"Check texture size (must be {0}x{0}) and mip-map count", 
+								IBLUtility::REFLECTION_CUBEMAP_SIZE);
+
+							LOGERR(errMsg);
+							probeInfo.errorFlagged = true;
+						}
+					}
+					else
+					{
+						for(UINT32 face = 0; face < 6; face++)
+							for(UINT32 mip = 0; mip <= srcProps.getNumMipmaps(); mip++)
+								probeInfo.texture->copy(mReflCubemapArrayTex, face, mip, probeInfo.arrayIdx * 6 + face, mip);
+					}
+
+					mScene->setReflectionProbeArrayIndex(i, probeInfo.arrayIdx, true);
+				}
+
+				// Note: Consider pruning the reflection cubemap array if empty slot count becomes too high
+			}
+
+			// Get skybox image-based lighting textures if needed/available
+			if (mSkybox != nullptr && mSkyboxTexture != nullptr)
+			{
+				// If haven't assigned them already, do it now
+				if (mSkyboxFilteredReflections == nullptr)
+				{
+					if (!LightProbeCache::instance().isRadianceDirty(mSkybox->getUUID()))
+						mSkyboxFilteredReflections = LightProbeCache::instance().getCachedRadianceTexture(mSkybox->getUUID());
+					else
+					{
+						mSkyboxFilteredReflections = Texture::create(cubemapDesc);
+
+						IBLUtility::scaleCubemap(mSkyboxTexture, 0, mSkyboxFilteredReflections, 0);
+						IBLUtility::filterCubemapForSpecular(mSkyboxFilteredReflections, scratchCubemap);
+						LightProbeCache::instance().setCachedRadianceTexture(mSkybox->getUUID(), mSkyboxFilteredReflections);
+					}
+				}
+
+				if(mSkyboxIrradiance == nullptr)
+				{
+					if (!LightProbeCache::instance().isIrradianceDirty(mSkybox->getUUID()))
+						mSkyboxIrradiance = LightProbeCache::instance().getCachedIrradianceTexture(mSkybox->getUUID());
+					else
+					{
+						TEXTURE_DESC irradianceCubemapDesc;
+						irradianceCubemapDesc.type = TEX_TYPE_CUBE_MAP;
+						irradianceCubemapDesc.format = PF_FLOAT_R11G11B10;
+						irradianceCubemapDesc.width = IBLUtility::IRRADIANCE_CUBEMAP_SIZE;
+						irradianceCubemapDesc.height = IBLUtility::IRRADIANCE_CUBEMAP_SIZE;
+						irradianceCubemapDesc.numMips = 0;
+						irradianceCubemapDesc.usage = TU_STATIC | TU_RENDERTARGET;
+
+						mSkyboxIrradiance = Texture::create(irradianceCubemapDesc);
+
+						IBLUtility::filterCubemapForIrradiance(mSkyboxFilteredReflections, mSkyboxIrradiance);
+						LightProbeCache::instance().setCachedIrradianceTexture(mSkybox->getUUID(), mSkyboxFilteredReflections);
+					}
+				}
+			}
+			else
+			{
+				mSkyboxFilteredReflections = nullptr;
+				mSkyboxIrradiance = nullptr;
+			}
+
+		}
+		bs_frame_clear();
+	}
+
+	void RenderBeast::captureSceneCubeMap(const SPtr<Texture>& cubemap, const Vector3& position, bool hdr, const FrameInfo& frameInfo)
+	{
+		const SceneInfo& sceneInfo = mScene->getSceneInfo();
+		auto& texProps = cubemap->getProperties();
 
 		Matrix4 projTransform = Matrix4::projectionPerspective(Degree(90.0f), 1.0f, 0.05f, 1000.0f);
 		ConvexVolume localFrustum(projTransform);
@@ -1038,44 +958,34 @@ namespace bs { namespace ct
 		viewDesc.target.clearStencilValue = 0;
 
 		viewDesc.target.nrmViewRect = Rect2(0, 0, 1.0f, 1.0f);
-		viewDesc.target.viewRect = Rect2I(0, 0, size, size);
-		viewDesc.target.targetWidth = size;
-		viewDesc.target.targetHeight = size;
+		viewDesc.target.viewRect = Rect2I(0, 0, texProps.getWidth(), texProps.getHeight());
+		viewDesc.target.targetWidth = texProps.getWidth();
+		viewDesc.target.targetHeight = texProps.getHeight();
 		viewDesc.target.numSamples = 1;
 
 		viewDesc.isOverlay = false;
 		viewDesc.isHDR = hdr;
+		viewDesc.noLighting = false;
+		viewDesc.noShadows = true; // Note: If I ever change this I need to make sure that shadow map rendering is aware of this view (currently it is only aware of main camera views)
 		viewDesc.triggerCallbacks = false;
 		viewDesc.runPostProcessing = false;
+		viewDesc.renderingReflections = true;
 
 		viewDesc.visibleLayers = 0xFFFFFFFFFFFFFFFF;
 		viewDesc.nearPlane = 0.5f;
 		viewDesc.farPlane = 1000.0f;
-		viewDesc.flipView = RenderAPI::instance().getAPIInfo().getUVYAxisUp();
+		viewDesc.flipView = RenderAPI::instance().getAPIInfo().isFlagSet(RenderAPIFeatureFlag::UVYAxisUp);
 
 		viewDesc.viewOrigin = position;
 		viewDesc.projTransform = projTransform;
+		viewDesc.projType = PT_PERSPECTIVE;
 
 		viewDesc.stateReduction = mCoreOptions->stateReductionMode;
 		viewDesc.sceneCamera = nullptr;
 
-		// Note: Find a camera to receive skybox from. Skybox should probably be a global property instead of a per-camera
-		// one.
-		for(auto& entry : mRenderTargets)
-		{
-			for(auto& camera : entry.cameras)
-			{
-				if (camera->getSkybox() != nullptr)
-				{
-					viewDesc.skyboxTexture = camera->getSkybox();
-					break;
-				}
-			}
-		}
-
 		Matrix4 viewOffsetMat = Matrix4::translation(-position);
 
-		RendererCamera views[6];
+		RendererView views[6];
 		for(UINT32 i = 0; i < 6; i++)
 		{
 			// Calculate view matrix
@@ -1097,7 +1007,7 @@ namespace bs { namespace ct
 				up = -Vector3::UNIT_Z;
 				break;
 			case CF_NegativeY:
-				forward = Vector3::UNIT_X;
+				forward = Vector3::UNIT_X; // TODO: Why X here?
 				up = Vector3::UNIT_Z;
 				break;
 			case CF_PositiveZ:
@@ -1109,7 +1019,7 @@ namespace bs { namespace ct
 			}
 
 			Vector3 right = Vector3::cross(up, forward);
-			viewRotationMat = Matrix3(right, up, forward);
+			viewRotationMat = Matrix3(right, up, forward); // TODO - Use -forward here? (Works for shadows)
 
 			viewDesc.viewDirection = forward;
 			viewDesc.viewTransform = Matrix4(viewRotationMat) * viewOffsetMat;
@@ -1138,98 +1048,16 @@ namespace bs { namespace ct
 
 			views[i].setView(viewDesc);
 			views[i].updatePerViewBuffer();
-			views[i].determineVisible(mRenderables, mRenderableCullInfos);
+
+			views[i].determineVisible(sceneInfo.renderables, sceneInfo.renderableCullInfos);
 		}
 
-		RendererCamera* viewPtrs[] = { &views[0], &views[1], &views[2], &views[3], &views[4], &views[5] };
-		renderViews(viewPtrs, 6, frameInfo);
+		RendererView* viewPtrs[] = { &views[0], &views[1], &views[2], &views[3], &views[4], &views[5] };
 
-		ReflectionCubemap::filterCubemapForSpecular(cubemap);
+		RendererViewGroup viewGroup(viewPtrs, 6);
+		viewGroup.determineVisibility(sceneInfo);
 
-		return cubemap;
+		renderViews(viewGroup, frameInfo);
 	}
 
-	void RenderBeast::refreshSamplerOverrides(bool force)
-	{
-		bool anyDirty = false;
-		for (auto& entry : mSamplerOverrides)
-		{
-			SPtr<MaterialParams> materialParams = entry.first.material->_getInternalParams();
-
-			MaterialSamplerOverrides* materialOverrides = entry.second;
-			for(UINT32 i = 0; i < materialOverrides->numOverrides; i++)
-			{
-				SamplerOverride& override = materialOverrides->overrides[i];
-				const MaterialParamsBase::ParamData* materialParamData = materialParams->getParamData(override.paramIdx);
-
-				SPtr<SamplerState> samplerState;
-				materialParams->getSamplerState(*materialParamData, samplerState);
-
-				UINT64 hash = 0;
-				if (samplerState != nullptr)
-					hash = samplerState->getProperties().getHash();
-
-				if (hash != override.originalStateHash || force)
-				{
-					if (samplerState != nullptr)
-						override.state = SamplerOverrideUtility::generateSamplerOverride(samplerState, mCoreOptions);
-					else
-						override.state = SamplerOverrideUtility::generateSamplerOverride(SamplerState::getDefault(), mCoreOptions);
-
-					override.originalStateHash = override.state->getProperties().getHash();
-					materialOverrides->isDirty = true;
-				}
-
-				// Dirty flag can also be set externally, so check here even though we assign it above
-				if (materialOverrides->isDirty)
-					anyDirty = true;
-			}
-		}
-
-		// Early exit if possible
-		if (!anyDirty)
-			return;
-
-		UINT32 numRenderables = (UINT32)mRenderables.size();
-		for (UINT32 i = 0; i < numRenderables; i++)
-		{
-			for(auto& element : mRenderables[i]->elements)
-			{
-				MaterialSamplerOverrides* overrides = element.samplerOverrides;
-				if(overrides != nullptr && overrides->isDirty)
-				{
-					UINT32 numPasses = element.material->getNumPasses();
-					for(UINT32 j = 0; j < numPasses; j++)
-					{
-						SPtr<GpuParams> params = element.params->getGpuParams(j);
-
-						const UINT32 numStages = 6;
-						for (UINT32 k = 0; k < numStages; k++)
-						{
-							GpuProgramType type = (GpuProgramType)k;
-
-							SPtr<GpuParamDesc> paramDesc = params->getParamDesc(type);
-							if (paramDesc == nullptr)
-								continue;
-
-							for (auto& samplerDesc : paramDesc->samplers)
-							{
-								UINT32 set = samplerDesc.second.set;
-								UINT32 slot = samplerDesc.second.slot;
-
-								UINT32 overrideIndex = overrides->passes[j].stateOverrides[set][slot];
-								if (overrideIndex == (UINT32)-1)
-									continue;
-
-								params->setSamplerState(set, slot, overrides->overrides[overrideIndex].state);
-							}
-						}
-					}
-				}
-			}
-		}
-
-		for (auto& entry : mSamplerOverrides)
-			entry.second->isDirty = false;
-	}
 }}

@@ -49,7 +49,7 @@ namespace BansheeEditor
         /// <summary>
         /// Adds a point light component to the currently selected scene object.
         /// </summary>
-        [MenuItem("Components/Point light", 7048)]
+        [MenuItem("Components/Radial light", 7048)]
         private static void AddPointLight()
         {
             SceneObject so = Selection.SceneObject;
@@ -58,7 +58,7 @@ namespace BansheeEditor
 
             UndoRedo.RecordSO(so, false, "Added a Light component");
             Light light = so.AddComponent<Light>();
-            light.Type = LightType.Point;
+            light.Type = LightType.Radial;
             EditorApplication.SetSceneDirty();
         }
 
@@ -442,6 +442,36 @@ namespace BansheeEditor
         }
 
         /// <summary>
+        /// Adds a Skybox component to the currently selected scene object.
+        /// </summary>
+        [MenuItem("Components/Skybox", 7027)]
+        private static void AddSkybox()
+        {
+            SceneObject so = Selection.SceneObject;
+            if (so == null)
+                return;
+
+            UndoRedo.RecordSO(so, false, "Added an Skybox component");
+            so.AddComponent<Skybox>();
+            EditorApplication.SetSceneDirty();
+        }
+
+        /// <summary>
+        /// Adds a ReflectionProbe component to the currently selected scene object.
+        /// </summary>
+        [MenuItem("Components/Reflection probe", 7026)]
+        private static void AddReflectionProbe()
+        {
+            SceneObject so = Selection.SceneObject;
+            if (so == null)
+                return;
+
+            UndoRedo.RecordSO(so, false, "Added an ReflectionProbe component");
+            so.AddComponent<ReflectionProbe>();
+            EditorApplication.SetSceneDirty();
+        }
+
+        /// <summary>
         /// Creates a new empty scene object.
         /// </summary>
         [MenuItem("Scene Objects/Scene Object", 8051)]
@@ -489,13 +519,13 @@ namespace BansheeEditor
         /// <summary>
         /// Creates a new scene object with a point light component.
         /// </summary>
-        [MenuItem("Scene Objects/Point light", 8048)]
-        [ToolbarItem("Point light", ToolbarIcon.NewPointLight, "New point light", 1598)]
+        [MenuItem("Scene Objects/Radial light", 8048)]
+        [ToolbarItem("Point light", ToolbarIcon.NewPointLight, "New radial light", 1598)]
         private static void AddPointLightSO()
         {
-            SceneObject so = UndoRedo.CreateSO("Point light", "Created a Light");
+            SceneObject so = UndoRedo.CreateSO("Radial light", "Created a Light");
             Light light = so.AddComponent<Light>();
-            light.Type = LightType.Point;
+            light.Type = LightType.Radial;
 
             Selection.SceneObject = so;
             FocusOnHierarchyOrScene();
@@ -542,6 +572,34 @@ namespace BansheeEditor
         {
             SceneObject so = UndoRedo.CreateSO("GUIWidget", "Created a GUIWidget");
             so.AddComponent<GUIWidget>();
+
+            Selection.SceneObject = so;
+            FocusOnHierarchyOrScene();
+            EditorApplication.SetSceneDirty();
+        }
+
+        /// <summary>
+        /// Creates a new scene object with a Skybox component.
+        /// </summary>
+        [MenuItem("Scene Objects/Skybox", 8044)]
+        private static void AddSkyboxSO()
+        {
+            SceneObject so = UndoRedo.CreateSO("Skybox", "Created a Skybox");
+            so.AddComponent<Skybox>();
+
+            Selection.SceneObject = so;
+            FocusOnHierarchyOrScene();
+            EditorApplication.SetSceneDirty();
+        }
+
+        /// <summary>
+        /// Creates a new scene object with a ReflectionProbe component.
+        /// </summary>
+        [MenuItem("Scene Objects/Reflection probe", 8044)]
+        private static void AddReflectionProbeSO()
+        {
+            SceneObject so = UndoRedo.CreateSO("ReflectionProbe", "Created a ReflectionProbe");
+            so.AddComponent<ReflectionProbe>();
 
             Selection.SceneObject = so;
             FocusOnHierarchyOrScene();

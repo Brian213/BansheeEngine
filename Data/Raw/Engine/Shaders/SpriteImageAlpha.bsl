@@ -1,31 +1,16 @@
 #include "$ENGINE$\SpriteImage.bslinc"
 
-Technique : inherits("SpriteImage") =
+technique SpriteImageAlpha
 {
-	Language = "HLSL11";
-	
-	Pass =
-	{
-		Target = 
-		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-			WriteMask = RGB;
-		};
-	};
-};
+	mixin SpriteImage;
 
-Technique : inherits("SpriteImage") =
-{
-	Language = "GLSL";
-	
-	Pass =
+	blend
 	{
-		Target = 
+		target	
 		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-			WriteMask = RGB;
+			enabled = true;
+			color = { srcA, srcIA, add };
+			writemask = RGB;
 		};
 	};
 };

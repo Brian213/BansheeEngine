@@ -1,132 +1,64 @@
-Parameters =
+technique SpriteLine
 {
-	mat4x4 	worldTransform;
-	float	invViewportWidth;
-	float	invViewportHeight;
-
-	color	tint;
-};
-
-Technique =
-{
-	Language = "HLSL11";
-	
-	Pass =
+	blend
 	{
-		Target = 
+		target	
 		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-			WriteMask = RGB;
+			enabled = true;
+			color = { srcA, srcIA, add };
+			writemask = RGB;
 		};
-		
-		DepthRead = false;
-		DepthWrite = false;
-		
-		Multisample = false; // This controls line rendering algorithm
-		AALine = true;
-		
-		Common = 
-		{
-			struct VStoFS
-			{
-				float4 position : SV_POSITION;
-			};
-		};
-		
-		Vertex =
-		{
-			float invViewportWidth;
-			float invViewportHeight;
-			float4x4 worldTransform;
-
-			struct VertexInput
-			{
-				float2 position : POSITION;
-			};			
-			
-			VStoFS main(VertexInput input)
-			{
-				float4 tfrmdPos = mul(worldTransform, float4(input.position, 0, 1));
-				
-				float tfrmdX = -1.0f + (tfrmdPos.x * invViewportWidth);
-				float tfrmdY = 1.0f - (tfrmdPos.y * invViewportHeight);
-
-				VStoFS output;
-				output.position = float4(tfrmdX, tfrmdY, 0, 1);
-
-				return output;
-			}
-		};
-		
-		Fragment =
-		{
-			float4 tint;
-			
-			float4 main(VStoFS input) : SV_Target
-			{
-				return tint;
-			}
-		};
+	};	
+	
+	depth
+	{
+		read = false;
+		write = false;
 	};
-};
-
-Technique =
-{
-	Language = "GLSL";
 	
-	Pass =
+	raster
 	{
-		Target = 
+		multisample = false; // This controls line rendering algorithm
+		lineaa = false;
+	};
+	
+	code
+	{
+		struct VStoFS
 		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-			WriteMask = RGB;
+			float4 position : SV_POSITION;
 		};
-		
-		DepthRead = false;
-		DepthWrite = false;
-		
-		Vertex =
-		{
-			layout (binding = 0) uniform VertUBO
-			{
-				float invViewportWidth;
-				float invViewportHeight;
-				mat4 worldTransform;
-			};
-		
-			layout (location = 0) in vec2 bs_position;
 
-			out gl_PerVertex
-			{
-				vec4 gl_Position;
-			};			
+		cbuffer GUIParams
+		{
+			float4x4 gWorldTransform;
+			float gInvViewportWidth;
+			float gInvViewportHeight;
+			float gViewportYFlip;
+			float4 gTint;
+		}	
+		
+		struct VertexInput
+		{
+			float2 position : POSITION;
+		};			
+		
+		VStoFS vsmain(VertexInput input)
+		{
+			float4 tfrmdPos = mul(gWorldTransform, float4(input.position, 0, 1));
 			
-			void main()
-			{
-				vec4 tfrmdPos = worldTransform * vec4(bs_position, 0, 1);
-				
-				float tfrmdX = -1.0f + (tfrmdPos.x * invViewportWidth);
-				float tfrmdY = 1.0f - (tfrmdPos.y * invViewportHeight);
+			float tfrmdX = -1.0f + (tfrmdPos.x * gInvViewportWidth);
+			float tfrmdY = 1.0f - (tfrmdPos.y * gInvViewportHeight);
 
-				gl_Position = vec4(tfrmdX, tfrmdY, 0, 1);
-			}
-		};
-		
-		Fragment =
+			VStoFS output;
+			output.position = float4(tfrmdX, tfrmdY, 0, 1);
+
+			return output;
+		}
+
+		float4 fsmain(VStoFS input) : SV_Target
 		{
-			layout (binding = 1) uniform FragUBO
-			{
-				vec4 tint;
-			};
-			
-			out vec4 fragColor;
-
-			void main()
-			{
-				fragColor = tint;
-			}
-		};
+			return gTint;
+		}
 	};
 };

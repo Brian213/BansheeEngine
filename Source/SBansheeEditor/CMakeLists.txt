@@ -1,6 +1,9 @@
 # Source files and their filters
 include(CMakeSources.cmake)
 
+source_group("Header Files\\Generated" FILES ${BS_GENERATED_EDITOR_H_FILES})
+source_group("Source Files\\Generated" FILES ${BS_GENERATED_EDITOR_CPP_FILES})
+
 # Includes
 set(SBansheeEditor_INC 
 	"Include"
@@ -9,12 +12,17 @@ set(SBansheeEditor_INC
 	"../BansheeEngine/Include"
 	"../BansheeEditor/Include"
 	"../BansheeMono/Include"
-	"../SBansheeEngine/Include")
+	"../SBansheeEngine/Include"
+	"${PROJECT_BINARY_DIR}/Generated/Engine/Include"
+	"${PROJECT_BINARY_DIR}/Generated/Editor/Include")
 
 include_directories(${SBansheeEditor_INC})	
-	
+
 # Target
-add_library(SBansheeEditor SHARED ${BS_SBANSHEEEDITOR_SRC})
+add_library(SBansheeEditor SHARED 
+	${BS_SBANSHEEEDITOR_SRC} 
+	${BS_GENERATED_EDITOR_H_FILES} 
+	${BS_GENERATED_EDITOR_CPP_FILES})
 
 # Defines
 target_compile_definitions(SBansheeEditor PRIVATE -DBS_SCR_BED_EXPORTS)

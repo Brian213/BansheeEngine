@@ -13,7 +13,7 @@ namespace bs { namespace ct
 	 */
 
 	/**	DirectX 11 implementation of a generic GPU buffer. */
-	class BS_D3D11_EXPORT D3D11GpuBuffer : public GpuBuffer
+	class D3D11GpuBuffer : public GpuBuffer
     {
     public:
 		~D3D11GpuBuffer();
@@ -33,8 +33,8 @@ namespace bs { namespace ct
 			BufferWriteType writeFlags = BWT_NORMAL, UINT32 queueIdx = 0) override;
 
 		/** @copydoc GpuBuffer::copyData */
-		void copyData(HardwareBuffer& srcBuffer, UINT32 srcOffset, 
-			UINT32 dstOffset, UINT32 length, bool discardWholeBuffer = false, UINT32 queueIdx = 0) override;
+		void copyData(HardwareBuffer& srcBuffer, UINT32 srcOffset, UINT32 dstOffset, UINT32 length, 
+			bool discardWholeBuffer = false, const SPtr<CommandBuffer>& commandBuffer = nullptr) override;
 
 		/**
 		 * Creates a buffer view that may be used for binding a buffer to a slot in the pipeline. Views allow you to specify

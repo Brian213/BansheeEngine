@@ -1,97 +1,62 @@
 #include "$ENGINE$\PPBase.bslinc"
 
-Parameters =
+technique PPDownsample
 {
-	float2		gInvTexSize;
-	Sampler2D 	gInputSamp : alias("gInputTex");
-	Texture2D 	gInputTex;
-};
+	mixin PPBase;
 
-Blocks =
-{
-	Block Input;
-};
-
-Technique : inherits("PPBase") =
-{
-	Language = "HLSL11";
-	
-	Pass =
+	code
 	{
-		Fragment =
+		[internal]
+		cbuffer Input
 		{
-			cbuffer Input
+			float2 gOffsets[4];
+		}		
+
+		#if MSAA
+			Texture2DMS<float4> gInputTex;
+			
+			// position is expected to be at the center of 2x2 pixel tile, in pixels
+			float4 bilinearFilter(float2 position)
 			{
-				float2 gInvTexSize;
-			}		
-		
+				float4 sampleSum;
+
+				sampleSum = gInputTex.Load(trunc(position + float2(-0.5f, -0.5f)), 0);
+				sampleSum += gInputTex.Load(trunc(position + float2(0.5f, -0.5f)), 0);
+				sampleSum += gInputTex.Load(trunc(position + float2(-0.5f, 0.5f)), 0);
+				sampleSum += gInputTex.Load(trunc(position + float2(0.5f, 0.5f)), 0);
+				
+				return sampleSum * 0.25f;
+			}
+		#else
 			SamplerState gInputSamp;
 			Texture2D gInputTex;
-
-			float4 main(VStoFS input) : SV_Target0
+			
+			// position is expected to be at the center of 2x2 pixel tile, in UV
+			float4 bilinearFilter(float2 position)
 			{
-				float2 UV[4];
-
-				// Blur using a 4x4 kernel. It's assumed current position is right in the middle of a 2x2 kernel (because the output
-				// texture should be 1/2 the size of the output texture), and moving by one in each direction will sample areas
-				// between a 2x2 kernel as well if bilinear filtering is enabled.
-				UV[0] = input.uv0 + gInvTexSize * float2(-1, -1);
-				UV[1] = input.uv0 + gInvTexSize * float2( 1, -1);
-				UV[2] = input.uv0 + gInvTexSize * float2(-1,  1);
-				UV[3] = input.uv0 + gInvTexSize * float2( 1,  1);
-
-				float4 sample[4];
-
-				for(uint i = 0; i < 4; i++)
-					sample[i] = gInputTex.Sample(gInputSamp, UV[i]);
-
-				return (sample[0] + sample[1] + sample[2] + sample[3]) * 0.25f;
-			}	
-		};
-	};
-};
-
-Technique : inherits("PPBase") =
-{
-	Language = "GLSL";
-	
-	Pass =
-	{
-		Fragment =
+				return gInputTex.Sample(gInputSamp, position);
+			}			
+		#endif
+		
+		float4 fsmain(VStoFS input) : SV_Target0
 		{
-			in VStoFS
-			{
-				layout(location = 0) vec2 uv0;
-			} FSInput;		
-		
-			layout(location = 0) out vec4 fragColor;
-		
-			layout(binding = 0) uniform Input
-			{
-				vec2 gInvTexSize;
-			};
+			// input.uv0 is in the center of 2x2 block of pixels. If MSAA is enabled the value is
+			// in pixels, otherwise normal UV range.
 			
-			layout(binding = 1) uniform sampler2D gInputTex;
-			
-			void main()
-			{
-				vec2 UV[4];
+			#if QUALITY == 0 
+				// Single bilinearly filtered sample (2x2 block average)
+				return bilinearFilter(input.uv0);
+			#else // QUALITY == 1
+				// Four bilinearly filtered samples (4x4 block average)
+				float4 samples[4];
 
-				// Blur using a 4x4 kernel. It's assumed current position is right in the middle of a 2x2 kernel (because the output
-				// texture should be 1/2 the size of the output texture), and moving by one in each direction will sample areas
-				// between a 2x2 kernel as well if bilinear filtering is enabled.
-				UV[0] = FSInput.uv0 + gInvTexSize * vec2(-1, -1);
-				UV[1] = FSInput.uv0 + gInvTexSize * vec2( 1, -1);
-				UV[2] = FSInput.uv0 + gInvTexSize * vec2(-1,  1);
-				UV[3] = FSInput.uv0 + gInvTexSize * vec2( 1,  1);
-
-				vec4 samples[4];
-
+				[unroll]
 				for(uint i = 0; i < 4; i++)
-					samples[i] = texture(gInputTex, UV[i]);
+					samples[i] = bilinearFilter(input.uv0 + gOffsets[i]);
 
-				fragColor = (samples[0] + samples[1] + samples[2] + samples[3]) * 0.25f;
-			}	
-		};
+				return (samples[0] + samples[1] + samples[2] + samples[3]) * 0.25f;
+				
+			#endif // QUALITY
+		}	
 	};
 };

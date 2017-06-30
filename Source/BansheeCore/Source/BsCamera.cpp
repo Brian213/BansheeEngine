@@ -11,7 +11,7 @@
 #include "BsRenderAPI.h"
 #include "BsSceneObject.h"
 #include "BsRendererManager.h"
-#include "BsCoreRenderer.h"
+#include "BsRenderer.h"
 #include "BsFrameAlloc.h"
 
 namespace bs
@@ -59,7 +59,8 @@ namespace bs
 	{
 		if (nearPlane <= 0)
 		{
-			BS_EXCEPT(InvalidParametersException, "Near clip distance must be greater than zero.");
+			LOGERR("Near clip distance must be greater than zero.");
+            return;
 		}
 
 		mNearDist = nearPlane;
@@ -546,7 +547,12 @@ namespace bs
 
 		Vector2 ndcPoint;
 		ndcPoint.x = (float)(((screenPoint.x - viewport.x) / (float)viewport.width) * 2.0f - 1.0f);
-		ndcPoint.y = (float)((1.0f - ((screenPoint.y - viewport.y) / (float)viewport.height)) * 2.0f - 1.0f);
+
+		const RenderAPIInfo& info = RenderAPI::getAPIInfo();
+		if(info.isFlagSet(RenderAPIFeatureFlag::NDCYAxisDown))
+			ndcPoint.y = (float)(((screenPoint.y - viewport.y) / (float)viewport.height) * 2.0f - 1.0f);
+		else
+			ndcPoint.y = (float)((1.0f - ((screenPoint.y - viewport.y) / (float)viewport.height)) * 2.0f - 1.0f);
 
 		return ndcPoint;
 	}
@@ -733,10 +739,6 @@ namespace bs
 	{
 		UINT32 dirtyFlag = getCoreDirtyFlags();
 
-		SPtr<ct::Texture> skyTexture;
-		if (mSkyTexture.isLoaded())
-			skyTexture = mSkyTexture->getCore();
-
 		UINT32 size = 0;
 		size += rttiGetElemSize(dirtyFlag);
 		size += rttiGetElemSize(mPosition);
@@ -759,7 +761,6 @@ namespace bs
 			size += rttiGetElemSize(mCameraFlags);
 			size += rttiGetElemSize(mIsActive);
 			size += rttiGetElemSize(mMSAA);
-			size += sizeof(SPtr<ct::Texture>);
 			size += sizeof(UINT32);
 
 			if(mPPSettings != nullptr)
@@ -792,10 +793,6 @@ namespace bs
 			dataPtr = rttiWriteElem(mCameraFlags, dataPtr);
 			dataPtr = rttiWriteElem(mIsActive, dataPtr);
 			dataPtr = rttiWriteElem(mMSAA, dataPtr);
-
-			SPtr<ct::Texture>* skyTexDest = new (dataPtr) SPtr<ct::Texture>();
-			*skyTexDest = skyTexture;
-			dataPtr += sizeof(skyTexture);
 
 			dataPtr = rttiWriteElem(ppSize, dataPtr);
 
@@ -836,11 +833,13 @@ namespace bs
 	}
 
 	Camera::Camera(SPtr<RenderTarget> target, float left, float top, float width, float height)
+		: mRendererId(0)
 	{
 		mViewport = Viewport::create(target, left, top, width, height);
 	}
 
 	Camera::Camera(const SPtr<Viewport>& viewport)
+		: mRendererId(0)
 	{
 		mViewport = viewport;
 	}
@@ -886,11 +885,6 @@ namespace bs
 			dataPtr = rttiReadElem(mCameraFlags, dataPtr);
 			dataPtr = rttiReadElem(mIsActive, dataPtr);
 			dataPtr = rttiReadElem(mMSAA, dataPtr);
-
-			SPtr<Texture>* skyTexture = (SPtr<Texture>*)dataPtr;
-			mSkyTexture = *skyTexture;
-			skyTexture->~SPtr<Texture>();
-			dataPtr += sizeof(SPtr<Texture>);
 
 			UINT32 ppSize = 0;
 			dataPtr = rttiReadElem(ppSize, dataPtr);

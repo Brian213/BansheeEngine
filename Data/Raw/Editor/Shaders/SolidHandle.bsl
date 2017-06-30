@@ -1,40 +1,32 @@
 #include "$EDITOR$/SolidGizmo.bslinc"
-Priority = 10;
 
-Technique : inherits("SolidGizmo") =
+options
 {
-	Language = "HLSL11";
-	
-	Pass =
-	{
-		DepthWrite = false;
-		DepthRead = false;
-		Stencil = true;
-		StencilOpFront = { KEEP, KEEP, INC, PASS };
-		
-		Target =
-		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-		};
-	};
+	priority = 10;
 };
 
-Technique : inherits("SolidGizmo") =
+technique SolidGizmo
 {
-	Language = "GLSL";
-	
-	Pass =
+	mixin SolidGizmoBase;
+
+	depth
 	{
-		DepthWrite = false;
-		DepthRead = false;
-		Stencil = true;
-		StencilOpFront = { KEEP, KEEP, INC, PASS };
-		
-		Target =
+		write = false;
+		read = false;
+	};
+	
+	stencil
+	{
+		enabled = true;
+		front = { keep, keep, inc, always };
+	};
+	
+	blend
+	{
+		target
 		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
+			enabled = true;
+			color = { srcA, srcIA, add };
 		};
 	};
 };

@@ -29,13 +29,6 @@ namespace bs
 		PostProcess = 1<<2
 	};
 
-	/**	Projection type to use by the camera. */
-    enum ProjectionType
-    {
-		PT_ORTHOGRAPHIC, /**< Projection type where object size remains constant and parallel lines remain parallel. */
-		PT_PERSPECTIVE /**< Projection type that emulates human vision. Objects farther away appear smaller. */
-    };
-
 	/**	Flags that describe a camera. */
 	enum class CameraFlag
 	{
@@ -44,13 +37,20 @@ namespace bs
 		 * buffer or multi-sampled render targets. Such cameras will not render any scene objects. This can improve
 		 * performance and memory usage. 
 		 */
-		Overlay = 1,
+		Overlay = 1 << 0,
 		/** 
 		 * High dynamic range allows light intensity to be more correctly recorded when rendering by allowing for a larger
 		 * range of values. The stored light is then converted into visible color range using exposure and a tone mapping 
 		 * operator.
 		 */
-		HDR = 2
+		HDR = 1 << 1,
+		/** 
+		 * Specify that no lighting should be applied to scene objects and everything should be rendered using their
+		 * albedo texture.
+		 */
+		NoLighting = 1 << 2,
+		/** Specify that no shadows should be applied to scene objects. Only relevant if lighting is turned on. */
+		NoShadows = 1 << 3
 	};
 
 	typedef Flags<CameraFlag> CameraFlags;
@@ -495,26 +495,6 @@ namespace bs
 		mutable AABox mBoundingBox; /**< Frustum bounding box. */
      };
 
-	 /** @copydoc CameraBase */
-	 template<bool Core>
-	 class TCamera : public CameraBase
-	 {
-	 public:
-		 typedef typename TTextureType<Core>::Type TextureType;
-
-		/** 
-		 * Sets a texture that will be used for rendering areas of the camera's render target not covered by any geometry. 
-		 * If not set a clear color will be used instead.
-		 */
-		void setSkybox(const TextureType& texture) { mSkyTexture = texture; _markCoreDirty(); }
-
-		/** @see setSkybox() */
-		TextureType getSkybox() const { return mSkyTexture; }
-
-	 protected:
-		 TextureType mSkyTexture;
-	 };
-
 	/** @} */
 
 	/** @addtogroup Renderer-Engine-Internal
@@ -522,7 +502,7 @@ namespace bs
 	 */
 
 	/** @copydoc CameraBase */
-	class BS_CORE_EXPORT Camera : public IReflectable, public CoreObject, public TCamera<false>
+	class BS_CORE_EXPORT Camera : public IReflectable, public CoreObject, public CameraBase
     {
     public:
 		/**	Returns the viewport used by the camera. */	
@@ -597,13 +577,19 @@ namespace bs
 	namespace ct
 	{
 	/** @copydoc CameraBase */
-	class BS_CORE_EXPORT Camera : public CoreObject, public TCamera<true>
+	class BS_CORE_EXPORT Camera : public CoreObject, public CameraBase
 	{
 	public:
 		~Camera();
 
 		/**	Returns the viewport used by the camera. */	
 		SPtr<Viewport> getViewport() const { return mViewport; }
+
+		/**	Sets an ID that can be used for uniquely identifying this object by the renderer. */
+		void setRendererId(UINT32 id) { mRendererId = id; }
+
+		/**	Retrieves an ID that can be used for uniquely identifying this object by the renderer. */
+		UINT32 getRendererId() const { return mRendererId; }
 
 	protected:
 		friend class bs::Camera;
@@ -622,6 +608,7 @@ namespace bs
 		/** @copydoc CoreObject::syncToCore */
 		void syncToCore(const CoreSyncData& data) override;
 
+		UINT32 mRendererId;
 		SPtr<Viewport> mViewport;
 	};
 	}

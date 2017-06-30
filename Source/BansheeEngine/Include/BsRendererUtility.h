@@ -64,13 +64,22 @@ namespace bs { namespace ct
 		 * Draws the specified mesh.
 		 *
 		 * @param[in]	mesh			Mesh to draw.
+		 * @param[in]	numInstances	Number of times to draw the mesh using instanced rendering.
+		 *
+		 * @note	Core thread.
+		 */
+		void draw(const SPtr<MeshBase>& mesh, UINT32 numInstances = 1);
+
+		/**
+		 * Draws the specified mesh.
+		 *
+		 * @param[in]	mesh			Mesh to draw.
 		 * @param[in]	subMesh			Portion of the mesh to draw.
 		 * @param[in]	numInstances	Number of times to draw the mesh using instanced rendering.
 		 *
 		 * @note	Core thread.
 		 */
 		void draw(const SPtr<MeshBase>& mesh, const SubMesh& subMesh, UINT32 numInstances = 1);
-
 
 		/**
 		 * Draws the specified mesh with an additional vertex buffer containing morph shape vertices.
@@ -131,10 +140,13 @@ namespace bs { namespace ct
 			drawScreenQuad(uv, textureSize, numInstances);
 		}
 
-		/** Returns a stencil mesh used for a point light (a unit sphere). */
-		SPtr<Mesh> getPointLightStencil() const { return mPointLightStencilMesh; }
+		/** Returns a stencil mesh used for a radial light (a unit sphere). */
+		SPtr<Mesh> getRadialLightStencil() const { return mPointLightStencilMesh; }
 
-		/** Returns a stencil mesh used for spot light. Actual vertex positions need to be computed in shader. */
+		/** 
+		 * Returns a stencil mesh used for a spot light. Actual vertex positions need to be computed in shader as this
+		 * method will return uninitialized vertex positions. 
+		 */
 		SPtr<Mesh> getSpotLightStencil() const { return mSpotLightStencilMesh; }
 
 		/** Returns a mesh that can be used for rendering a skybox. */
@@ -149,11 +161,7 @@ namespace bs { namespace ct
 		SPtr<BlitMat> mBlitMat;
 	};
 
-	/**
-	 * Provides easy access to RendererUtility.
-	 * 			
-	 * @note	Core thread only.
-	 */
+	/** Provides easy access to RendererUtility. */
 	BS_EXPORT RendererUtility& gRendererUtility();
 
 	/** Shader that resolves a MSAA surface into a non-MSAA render target. */

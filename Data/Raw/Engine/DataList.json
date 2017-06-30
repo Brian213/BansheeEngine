@@ -49,10 +49,6 @@
     ],
     "Includes": [
         {
-            "Path": "GBuffer.bslinc",
-            "UUID": "ef1a179a-4bf9-4dbd-b62a-e18524d959b6"
-        },
-        {
             "Path": "NormalVertexInput.bslinc",
             "UUID": "967325e7-262b-49bf-8c90-032a8bbc8ce2"
         },
@@ -111,6 +107,42 @@
         {
             "Path": "BasePass.bslinc",
             "UUID": "ec1d3d37-5509-4bcb-9be2-93208d6ae224"
+        },
+        {
+            "Path": "LightGridCommon.bslinc",
+            "UUID": "26caf86e-433c-4ade-9bc5-55c136d82912"
+        },
+        {
+            "Path": "SHCommon.bslinc",
+            "UUID": "b2a3ecfd-77d7-4a4c-900b-91c3804f4a58"
+        },
+        {
+            "Path": "ImageBasedLighting.bslinc",
+            "UUID": "ff162afd-ed4d-4460-8982-ad6c0f7be19c"
+        },
+        {
+            "Path": "GBufferInput.bslinc",
+            "UUID": "d481b49b-a60b-4d0d-bd8c-c3ed9c53fc6c"
+        },
+        {
+            "Path": "GBufferOutput.bslinc",
+            "UUID": "46df32e8-6400-46d5-9ac2-beefdc9016ad"
+        },
+        {
+            "Path": "ShadowDepthBase.bslinc",
+            "UUID": "ff6f2a9d-6766-4f80-984b-c159a5fd3c5e"
+        },
+        {
+            "Path": "DeferredLightCommon.bslinc",
+            "UUID": "8ffd1df9-3de4-442d-adca-95e8766fa81a"
+        },
+        {
+            "Path": "ShadowProjectionCommon.bslinc",
+            "UUID": "36da8807-b201-482b-b320-96f5300d1751"
+        },
+        {
+            "Path": "PPGaussianDOFCommon.bslinc",
+            "UUID": "78521453-a352-4fd8-b997-8e58942dee2d"
         }
     ],
     "Shaders": [
@@ -163,10 +195,6 @@
             "UUID": "a8aa01e7-7e72-4f84-89f8-a0097250b0d3"
         },
         {
-            "Path": "ReflectionCubemapFilter.bsl",
-            "UUID": "31b4b9ae-2afa-4cd8-b532-fe82a7f42baa"
-        },
-        {
             "Path": "Resolve.bsl",
             "UUID": "9d5f5101-2d7e-432c-b8ad-1998de9ca5c7"
         },
@@ -191,10 +219,6 @@
             "UUID": "25df2c87-c206-4c2f-ab2b-3aad9e7f90f1"
         },
         {
-            "Path": "TestFX.bsl",
-            "UUID": "9e783e45-bf1f-41cc-bb48-eb2e1200cfb6"
-        },
-        {
             "Path": "TiledDeferredLighting.bsl",
             "UUID": "787d7293-f335-4eda-a897-c706e6b5c818"
         },
@@ -209,6 +233,86 @@
         {
             "Path": "Transparent.bsl",
             "UUID": "10db2029-145c-424e-8399-2be48aa66680"
+        },
+        {
+            "Path": "FlatFramebufferToTexture.bsl",
+            "UUID": "c469c67d-6a43-4961-8e8c-d769f88546b7"
+        },
+        {
+            "Path": "ReflectionCubeDownsample.bsl",
+            "UUID": "0efe7fe5-f7da-4ac8-a634-522bf6791dad"
+        },
+        {
+            "Path": "ReflectionCubeImportanceSample.bsl",
+            "UUID": "ed16fdd9-7982-4f5c-ae63-8303c786e9ad"
+        },
+        {
+            "Path": "IrradianceComputeSH.bsl",
+            "UUID": "5b431ac7-c97a-407e-9ca3-6845d6cd0d6c"
+        },
+        {
+            "Path": "IrradianceProjectSH.bsl",
+            "UUID": "64d9535e-b5e7-42f5-8dc4-c0b15a5c48b9"
+        },
+        {
+            "Path": "IrradianceReduceSH.bsl",
+            "UUID": "aa40f2be-00e4-4322-a4bf-e435528f1e6e"
+        },
+        {
+            "Path": "TiledDeferredImageBasedLighting.bsl",
+            "UUID": "6029db14-107f-43df-9a33-7105c56aa0fd"
+        },
+        {
+            "Path": "ShadowDepthCube.bsl",
+            "UUID": "285c7b78-053a-4763-899e-8e11b5d4dac7"
+        },
+        {
+            "Path": "ShadowDepthNormal.bsl",
+            "UUID": "c9b64475-375d-410e-8cd4-e1b1181318d4"
+        },
+        {
+            "Path": "ShadowDepthDirectional.bsl",
+            "UUID": "acd0f016-8084-4b32-806c-66a85b34ee5a"
+        },
+        {
+            "Path": "DeferredDirectionalLight.bsl",
+            "UUID": "17d573f8-1142-4257-9e32-90038d3786f3"
+        },
+        {
+            "Path": "DeferredPointLight.bsl",
+            "UUID": "428d9fde-9838-4367-9857-57bd80c8f599"
+        },
+        {
+            "Path": "ShadowProject.bsl",
+            "UUID": "93667cf9-c699-4d92-ba20-6e2e912f76fa"
+        },
+        {
+            "Path": "ShadowProjectOmni.bsl",
+            "UUID": "50447773-98e9-410c-8f64-eacbb9622c52"
+        },
+        {
+            "Path": "ShadowProjectStencil.bsl",
+            "UUID": "c8625547-f5e7-43df-85cf-4da6e1806cf9"
+        },
+        {
+            "Path": "PPGaussianBlur.bsl",
+            "UUID": "14b16378-6282-4d2d-bc4c-2d662cc98066"
+        },
+        {
+            "Path": "PPGaussianDOFSeparate.bsl",
+            "UUID": "78285aaa-a862-46f3-837c-d13abbe8b351"
+        },
+        {
+            "Path": "PPGaussianDOFCombine.bsl",
+            "UUID": "2743e8f1-97cf-4441-b9e4-aad280343901"
+        },
+        {
+            "Path": "PPBuildHiZ.bsl",
+            "UUID": "1b314248-1965-49c5-968b-ae923c2af717"
+        },
+        {
+            "Path": "PPFXAA.bsl",
+            "UUID": "f064b202-dbc0-440f-bd9f-37f094b2c521"
         }
     ],
     "Skin": [

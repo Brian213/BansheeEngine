@@ -1,33 +1,23 @@
-Parameters =
+technique IconGizmo
 {
-	mat4x4		gMatViewProj;
-	float4		gViewDir;
-	
-	Sampler2D 	gMainTexSamp : alias("gMainTexture");
-	Texture2D 	gMainTexture;
-};
-
-Blocks =
-{
-	Block Uniforms : auto("GizmoUniforms");
-};
-
-Technique =
-{
-	Language = "HLSL11";
-	
-	Pass =
+	pass
 	{
-		Target = 
+		blend
 		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
+			target
+			{
+				enabled = true;
+				color = { srcA, srcIA, add };
+			};
 		};
 		
-		DepthWrite = false;
-		CompareFunc = LTE;
+		depth
+		{
+			write = false;
+			compare = lte;
+		};
 		
-		Vertex =
+		code
 		{
 			cbuffer Uniforms
 			{
@@ -35,7 +25,7 @@ Technique =
 				float4		gViewDir;
 			}
 
-			void main(
+			void vsmain(
 				in float3 inPos : POSITION,
 				in float2 uv : TEXCOORD0,
 				in float4 color : COLOR0,
@@ -47,14 +37,11 @@ Technique =
 				oUv = uv;
 				oColor = color;
 			}		
-		};
-		
-		Fragment =
-		{
+
 			SamplerState gMainTexSamp : register(s0);
 			Texture2D gMainTexture : register(t0);
 
-			float4 main(
+			float4 fsmain(
 				in float4 inPos : SV_Position, 
 				float2 uv : TEXCOORD0, 
 				float4 color : COLOR0) : SV_Target
@@ -64,18 +51,24 @@ Technique =
 		};
 	};
 	
-	Pass =
+	pass
 	{
-		Target = 
+		blend
 		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
+			target
+			{
+				enabled = true;
+				color = { srcA, srcIA, add };
+			};
 		};
 		
-		DepthWrite = false;
-		CompareFunc = GT;
+		depth
+		{
+			write = false;
+			compare = gt;
+		};
 		
-		Vertex =
+		code
 		{
 			cbuffer Uniforms
 			{
@@ -83,7 +76,7 @@ Technique =
 				float4		gViewDir;
 			}
 
-			void main(
+			void vsmain(
 				in float3 inPos : POSITION,
 				in float2 uv : TEXCOORD0,
 				in float4 color : COLOR1,
@@ -95,134 +88,16 @@ Technique =
 				oUv = uv;
 				oColor = color;
 			}		
-		};
-		
-		Fragment =
-		{
+
 			SamplerState gMainTexSamp : register(s0);
 			Texture2D gMainTexture : register(t0);
 
-			float4 main(
+			float4 fsmain(
 				in float4 inPos : SV_Position, 
 				float2 uv : TEXCOORD0, 
 				float4 color : COLOR0) : SV_Target
 			{
 				return color * gMainTexture.Sample(gMainTexSamp, uv);
-			}		
-		};
-	};	
-};	
-
-Technique =
-{
-	Language = "GLSL";
-	
-	Pass =
-	{
-		Target = 
-		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-		};
-		
-		DepthWrite = false;
-		CompareFunc = LTE;
-		
-		Vertex =
-		{
-			layout(location = 0) in vec3 bs_position;
-			layout(location = 1) in vec4 bs_color0;
-			layout(location = 2) in vec2 bs_texcoord0;
-			
-			layout(location = 0) out vec4 color0;
-			layout(location = 1) out vec2 texcoord0;
-
-			out gl_PerVertex
-			{
-				vec4 gl_Position;
-			};		
-		
-			layout(binding = 0, std140) uniform Uniforms
-			{
-				mat4 	gMatViewProj;
-				vec4	gViewDir;
-			};
-			
-			void main()
-			{
-				gl_Position = gMatViewProj * vec4(bs_position.xyz, 1);
-				texcoord0 = bs_texcoord0;
-				color0 = bs_color0;
-			}		
-		};
-		
-		Fragment =
-		{
-			layout(location = 0) in vec4 color0;
-			layout(location = 1) in vec2 texcoord0;
-			layout(location = 0) out vec4 fragColor;
-
-			layout(binding = 1) uniform sampler2D gMainTexture;
-			
-			void main()
-			{
-				vec4 texColor = texture(gMainTexture, texcoord0.st);
-				fragColor = color0 * texColor;
-			}		
-		};
-	};
-	
-	Pass =
-	{
-		Target = 
-		{
-			Blend = true;
-			Color = { SRCA, SRCIA, ADD };
-		};
-		
-		DepthWrite = false;
-		CompareFunc = GT;
-		
-		Vertex =
-		{
-			layout(location = 0) in vec3 bs_position;
-			layout(location = 1) in vec4 bs_color1;
-			layout(location = 2) in vec2 bs_texcoord0;
-			
-			layout(location = 0) out vec4 color0;
-			layout(location = 1) out vec2 texcoord0;
-
-			out gl_PerVertex
-			{
-				vec4 gl_Position;
-			};
-
-			layout(binding = 0, std140) uniform Uniforms
-			{
-				mat4 	gMatViewProj;
-				vec4	gViewDir;
-			};
-			
-			void main()
-			{
-				gl_Position = gMatViewProj * vec4(bs_position.xyz, 1);
-				texcoord0 = bs_texcoord0;
-				color0 = bs_color1;
-			}		
-		};
-		
-		Fragment =
-		{
-			layout(location = 0) in vec4 color0;
-			layout(location = 1) in vec2 texcoord0;
-			layout(location = 0) out vec4 fragColor;
-
-			layout(binding = 1) uniform sampler2D gMainTexture;
-			
-			void main()
-			{
-				vec4 texColor = texture(gMainTexture, texcoord0.st);
-				fragColor = color0 * texColor;
 			}		
 		};
 	};	

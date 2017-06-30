@@ -14,6 +14,9 @@
 #include "BsMatrix4.h"
 #include "BsBuiltinResources.h"
 
+#define XSC_ENABLE_LANGUAGE_EXT 1
+#include "Xsc/Xsc.h"
+
 extern "C" {
 #include "BsMMAlloc.h"
 #include "BsParserFX.h"
@@ -68,7 +71,574 @@ namespace bs
 		}
 	}
 
-	BSLFXCompileResult BSLFXCompiler::compile(const String& source, const UnorderedMap<String, String>& defines)
+	class XscLog : public Xsc::Log
+	{
+	public:
+		void SubmitReport(const Xsc::Report& report) override
+		{
+			switch (report.Type())
+			{
+			case Xsc::ReportTypes::Info:
+				mInfos.push_back({ FullIndent(), report });
+				break;
+			case Xsc::ReportTypes::Warning:
+				mWarnings.push_back({ FullIndent(), report });
+				break;
+			case Xsc::ReportTypes::Error:
+				mErrors.push_back({ FullIndent(), report });
+				break;
+			}
+		}
+
+		void getMessages(StringStream& output)
+		{
+			printAndClearReports(output, mInfos);
+			printAndClearReports(output, mWarnings, (mWarnings.size() == 1 ? "WARNING" : "WARNINGS"));
+			printAndClearReports(output, mErrors, (mErrors.size() == 1 ? "ERROR" : "ERRORS"));
+		}
+
+	private:
+		struct IndentReport
+		{
+			std::string indent;
+			Xsc::Report      report;
+		};
+
+		static void printMultiLineString(StringStream& output, const std::string& str, const std::string& indent)
+		{
+			// Determine at which position the actual text begins (excluding the "error (X:Y) : " or the like) 
+			auto textStartPos = str.find(" : ");
+			if (textStartPos != std::string::npos)
+				textStartPos += 3;
+			else
+				textStartPos = 0;
+
+			std::string newLineIndent(textStartPos, ' ');
+
+			size_t start = 0;
+			bool useNewLineIndent = false;
+			while (start < str.size())
+			{
+				output << indent;
+
+				if (useNewLineIndent)
+					output << newLineIndent;
+
+				// Print next line
+				auto end = str.find('\n', start);
+
+				if (end != std::string::npos)
+				{
+					output << str.substr(start, end - start);
+					start = end + 1;
+				}
+				else
+				{
+					output << str.substr(start);
+					start = end;
+				}
+
+				output << std::endl;
+				useNewLineIndent = true;
+			}
+		}
+
+		void printReport(StringStream& output, const IndentReport& r)
+		{
+			// Print optional context description
+			if (!r.report.Context().empty())
+				printMultiLineString(output, r.report.Context(), r.indent);
+
+			// Print report message
+			const auto& msg = r.report.Message();
+			printMultiLineString(output, msg, r.indent);
+
+			// Print optional line and line-marker
+			if (r.report.HasLine())
+			{
+				const auto& line = r.report.Line();
+				const auto& marker = r.report.Marker();
+
+				// Print line
+				output << r.indent << line << std::endl;
+
+				// Print line marker
+				output << r.indent << marker << std::endl;
+			}
+
+			// Print optional hints
+			for (const auto& hint : r.report.GetHints())
+				output << r.indent << hint << std::endl;
+		}
+
+		void printAndClearReports(StringStream& output, Vector<IndentReport>& reports, const String& headline = "")
+		{
+			if (!reports.empty())
+			{
+				if (!headline.empty())
+				{
+					String s = toString(reports.size()) + " " + headline;
+					output << s << std::endl;
+					output << String(s.size(), '-') << std::endl;
+				}
+
+				for (const auto& r : reports)
+					printReport(output, r);
+
+				reports.clear();
+			}
+		}
+
+		Vector<IndentReport> mInfos;
+		Vector<IndentReport> mWarnings;
+		Vector<IndentReport> mErrors;
+
+	};
+
+	GpuParamObjectType ReflTypeToTextureType(Xsc::Reflection::BufferType type)
+	{
+		switch(type)
+		{
+		case Xsc::Reflection::BufferType::RWTexture1D: return GPOT_RWTEXTURE1D;
+		case Xsc::Reflection::BufferType::RWTexture1DArray: return GPOT_RWTEXTURE1DARRAY;
+		case Xsc::Reflection::BufferType::RWTexture2D: return GPOT_RWTEXTURE2D;
+		case Xsc::Reflection::BufferType::RWTexture2DArray: return GPOT_RWTEXTURE2DARRAY;
+		case Xsc::Reflection::BufferType::RWTexture3D: return GPOT_RWTEXTURE3D;
+		case Xsc::Reflection::BufferType::Texture1D: return GPOT_TEXTURE1D;
+		case Xsc::Reflection::BufferType::Texture1DArray: return GPOT_TEXTURE1DARRAY;
+		case Xsc::Reflection::BufferType::Texture2D: return GPOT_TEXTURE2D;
+		case Xsc::Reflection::BufferType::Texture2DArray: return GPOT_TEXTURE2DARRAY;
+		case Xsc::Reflection::BufferType::Texture3D: return GPOT_TEXTURE3D;
+		case Xsc::Reflection::BufferType::TextureCube: return GPOT_TEXTURECUBE;
+		case Xsc::Reflection::BufferType::TextureCubeArray: return GPOT_TEXTURECUBEARRAY;
+		case Xsc::Reflection::BufferType::Texture2DMS: return GPOT_TEXTURE2DMS;
+		case Xsc::Reflection::BufferType::Texture2DMSArray: return GPOT_TEXTURE2DMSARRAY;
+		default: return GPOT_UNKNOWN;
+		}
+	}
+
+	GpuParamObjectType ReflTypeToBufferType(Xsc::Reflection::BufferType type)
+	{
+		switch(type)
+		{
+		case Xsc::Reflection::BufferType::Buffer: return GPOT_RWTYPED_BUFFER;
+		case Xsc::Reflection::BufferType::StructuredBuffer: return GPOT_STRUCTURED_BUFFER;
+		case Xsc::Reflection::BufferType::ByteAddressBuffer: return GPOT_BYTE_BUFFER;
+		case Xsc::Reflection::BufferType::RWBuffer: return GPOT_RWTYPED_BUFFER;
+		case Xsc::Reflection::BufferType::RWStructuredBuffer: return GPOT_RWSTRUCTURED_BUFFER;
+		case Xsc::Reflection::BufferType::RWByteAddressBuffer: return GPOT_RWBYTE_BUFFER;
+		case Xsc::Reflection::BufferType::AppendStructuredBuffer: return GPOT_RWAPPEND_BUFFER;
+		case Xsc::Reflection::BufferType::ConsumeStructuredBuffer: return GPOT_RWCONSUME_BUFFER;
+		default: return GPOT_UNKNOWN;
+		}
+	}
+
+	GpuParamDataType ReflTypeToDataType(Xsc::Reflection::DataType type)
+	{
+		switch (type)
+		{
+		case Xsc::Reflection::DataType::Bool: return GPDT_BOOL;
+		case Xsc::Reflection::DataType::Float: return GPDT_FLOAT1;
+		case Xsc::Reflection::DataType::Float2: return GPDT_FLOAT2;
+		case Xsc::Reflection::DataType::Float3: return GPDT_FLOAT3;
+		case Xsc::Reflection::DataType::Float4: return GPDT_FLOAT4;
+		case Xsc::Reflection::DataType::UInt:
+		case Xsc::Reflection::DataType::Int:
+			return GPDT_INT1;
+		case Xsc::Reflection::DataType::UInt2:
+		case Xsc::Reflection::DataType::Int2:
+			return GPDT_INT2;
+		case Xsc::Reflection::DataType::UInt3:
+		case Xsc::Reflection::DataType::Int3: 
+			return GPDT_INT3;
+		case Xsc::Reflection::DataType::UInt4:
+		case Xsc::Reflection::DataType::Int4: 
+			return GPDT_INT4;
+		case Xsc::Reflection::DataType::Float2x2: return GPDT_MATRIX_2X2;
+		case Xsc::Reflection::DataType::Float2x3: return GPDT_MATRIX_2X3;
+		case Xsc::Reflection::DataType::Float2x4: return GPDT_MATRIX_2X4;
+		case Xsc::Reflection::DataType::Float3x2: return GPDT_MATRIX_3X4;
+		case Xsc::Reflection::DataType::Float3x3: return GPDT_MATRIX_3X3;
+		case Xsc::Reflection::DataType::Float3x4: return GPDT_MATRIX_3X4;
+		case Xsc::Reflection::DataType::Float4x2: return GPDT_MATRIX_4X2;
+		case Xsc::Reflection::DataType::Float4x3: return GPDT_MATRIX_4X3;
+		case Xsc::Reflection::DataType::Float4x4: return GPDT_MATRIX_4X4;
+		default: return GPDT_UNKNOWN;
+		}
+	}
+
+	HTexture getBuiltinTexture(UINT32 idx)
+	{
+		if (idx == 1)
+			return BuiltinResources::getTexture(BuiltinTexture::White);
+		else if (idx == 2)
+			return BuiltinResources::getTexture(BuiltinTexture::Black);
+		else if (idx == 3)
+			return BuiltinResources::getTexture(BuiltinTexture::Normal);
+
+		return HTexture();
+	}
+
+	TextureAddressingMode parseTexAddrMode(Xsc::Reflection::TextureAddressMode addrMode)
+	{
+		switch (addrMode)
+		{
+		case Xsc::Reflection::TextureAddressMode::Border:
+			return TAM_BORDER;
+		case Xsc::Reflection::TextureAddressMode::Clamp:
+			return TAM_CLAMP;
+		case Xsc::Reflection::TextureAddressMode::Mirror:
+		case Xsc::Reflection::TextureAddressMode::MirrorOnce:
+			return TAM_MIRROR;
+		case Xsc::Reflection::TextureAddressMode::Wrap:
+		default:
+			return TAM_WRAP;
+		}
+	}
+
+	CompareFunction parseCompFunction(Xsc::Reflection::ComparisonFunc compFunc)
+	{
+		switch(compFunc)
+		{
+		case Xsc::Reflection::ComparisonFunc::Always:
+		default:
+			return CMPF_ALWAYS_PASS;
+		case Xsc::Reflection::ComparisonFunc::Never:
+			return CMPF_ALWAYS_FAIL;
+		case Xsc::Reflection::ComparisonFunc::Equal:
+			return CMPF_EQUAL;
+		case Xsc::Reflection::ComparisonFunc::Greater:
+			return CMPF_GREATER;
+		case Xsc::Reflection::ComparisonFunc::GreaterEqual:
+			return CMPF_GREATER_EQUAL;
+		case Xsc::Reflection::ComparisonFunc::Less:
+			return CMPF_LESS;
+		case Xsc::Reflection::ComparisonFunc::LessEqual:
+			return CMPF_LESS_EQUAL;
+		case Xsc::Reflection::ComparisonFunc::NotEqual:
+			return CMPF_NOT_EQUAL;
+		}
+	}
+
+	SPtr<SamplerState> parseSamplerState(const Xsc::Reflection::SamplerState& sampState)
+	{
+		SAMPLER_STATE_DESC desc;
+
+		desc.addressMode.u = parseTexAddrMode(sampState.addressU);
+		desc.addressMode.v = parseTexAddrMode(sampState.addressV);
+		desc.addressMode.w = parseTexAddrMode(sampState.addressW);
+
+		desc.borderColor[0] = sampState.borderColor[0];
+		desc.borderColor[1] = sampState.borderColor[1];
+		desc.borderColor[2] = sampState.borderColor[2];
+		desc.borderColor[3] = sampState.borderColor[3];
+
+		desc.comparisonFunc = parseCompFunction(sampState.comparisonFunc);
+		desc.maxAniso = sampState.maxAnisotropy;
+		desc.mipMax = sampState.maxLOD;
+		desc.mipMin = sampState.minLOD;
+		desc.mipmapBias = sampState.mipLODBias;
+
+		switch (sampState.filter)
+		{
+		case Xsc::Reflection::Filter::MinMagMipPoint: 
+		case Xsc::Reflection::Filter::ComparisonMinMagMipPoint: 
+			desc.minFilter = FO_POINT;
+			desc.magFilter = FO_POINT;
+			desc.mipFilter = FO_POINT;
+			break;
+		case Xsc::Reflection::Filter::MinMagPointMipLinear: 
+		case Xsc::Reflection::Filter::ComparisonMinMagPointMipLinear: 
+			desc.minFilter = FO_POINT;
+			desc.magFilter = FO_POINT;
+			desc.mipFilter = FO_LINEAR;
+			break;
+		case Xsc::Reflection::Filter::MinPointMagLinearMipPoint: 
+		case Xsc::Reflection::Filter::ComparisonMinPointMagLinearMipPoint: 
+			desc.minFilter = FO_POINT;
+			desc.magFilter = FO_LINEAR;
+			desc.mipFilter = FO_POINT;
+			break;
+		case Xsc::Reflection::Filter::MinPointMagMipLinear: 
+		case Xsc::Reflection::Filter::ComparisonMinPointMagMipLinear: 
+			desc.minFilter = FO_POINT;
+			desc.magFilter = FO_LINEAR;
+			desc.mipFilter = FO_LINEAR;
+			break;
+		case Xsc::Reflection::Filter::MinLinearMagMipPoint: 
+		case Xsc::Reflection::Filter::ComparisonMinLinearMagMipPoint: 
+			desc.minFilter = FO_LINEAR;
+			desc.magFilter = FO_POINT;
+			desc.mipFilter = FO_POINT;
+			break;
+		case Xsc::Reflection::Filter::MinLinearMagPointMipLinear: 
+		case Xsc::Reflection::Filter::ComparisonMinLinearMagPointMipLinear: 
+			desc.minFilter = FO_LINEAR;
+			desc.magFilter = FO_POINT;
+			desc.mipFilter = FO_LINEAR;
+			break;
+		case Xsc::Reflection::Filter::MinMagLinearMipPoint: 
+		case Xsc::Reflection::Filter::ComparisonMinMagLinearMipPoint: 
+			desc.minFilter = FO_LINEAR;
+			desc.magFilter = FO_LINEAR;
+			desc.mipFilter = FO_POINT;
+			break;
+		case Xsc::Reflection::Filter::MinMagMipLinear: 
+		case Xsc::Reflection::Filter::ComparisonMinMagMipLinear: 
+			desc.minFilter = FO_LINEAR;
+			desc.magFilter = FO_LINEAR;
+			desc.mipFilter = FO_LINEAR;
+			break;
+		case Xsc::Reflection::Filter::Anisotropic: 
+		case Xsc::Reflection::Filter::ComparisonAnisotropic: 
+			desc.minFilter = FO_ANISOTROPIC;
+			desc.magFilter = FO_ANISOTROPIC;
+			desc.minFilter = FO_ANISOTROPIC;
+			break;
+		default: 
+			break;
+		}
+		
+		return SamplerState::create(desc);
+	}
+
+	void parseParameters(const Xsc::Reflection::ReflectionData& reflData, SHADER_DESC& desc)
+	{
+		for(auto& entry : reflData.uniforms)
+		{
+			if ((entry.flags & Xsc::Reflection::Uniform::Flags::Internal) != 0)
+				continue;
+
+			String ident = entry.ident.c_str();
+			switch(entry.type)
+			{
+			case Xsc::Reflection::UniformType::UniformBuffer:
+				desc.setParamBlockAttribs(entry.ident.c_str(), false, GPBU_STATIC);
+				break;
+			case Xsc::Reflection::UniformType::Buffer:
+				{
+					GpuParamObjectType objType = ReflTypeToTextureType((Xsc::Reflection::BufferType)entry.baseType);
+					if(objType != GPOT_UNKNOWN)
+					{
+						if (entry.defaultValue == -1)
+							desc.addParameter(ident, ident, objType);
+						else
+							desc.addParameter(ident, ident, objType, getBuiltinTexture(entry.defaultValue));
+					}
+					else
+					{
+						objType = ReflTypeToBufferType((Xsc::Reflection::BufferType)entry.baseType);
+						desc.addParameter(ident, ident, objType);
+					}
+				}
+				break;
+			case Xsc::Reflection::UniformType::Sampler: 
+			{
+				auto findIter = reflData.samplerStates.find(entry.ident);
+				if (findIter == reflData.samplerStates.end() || !findIter->second.isNonDefault)
+					desc.addParameter(ident, ident, GPOT_SAMPLER2D);
+				else
+				{
+					SPtr<SamplerState> defaultVal = parseSamplerState(findIter->second);
+					desc.addParameter(ident, ident, GPOT_SAMPLER2D, defaultVal);
+				}
+				break;
+			}
+			case Xsc::Reflection::UniformType::Variable: 
+			{
+				bool isBlockInternal = false;
+				if(entry.uniformBlock != -1)
+				{
+					std::string blockName = reflData.constantBuffers[entry.uniformBlock].ident;
+					for (auto& uniform : reflData.uniforms)
+					{
+						if (uniform.type == Xsc::Reflection::UniformType::UniformBuffer && uniform.ident == blockName)
+						{
+							isBlockInternal = (uniform.flags & Xsc::Reflection::Uniform::Flags::Internal) != 0;
+							break;
+						}
+					}
+				}
+
+				if (!isBlockInternal)
+				{
+					GpuParamDataType type = ReflTypeToDataType((Xsc::Reflection::DataType)entry.baseType);
+					if ((entry.flags & Xsc::Reflection::Uniform::Flags::Color) != 0 &&
+						(type == GPDT_FLOAT3 || type == GPDT_FLOAT4))
+					{
+						type = GPDT_COLOR;
+					}
+
+					if (entry.defaultValue == -1)
+						desc.addParameter(ident, ident, type);
+					else
+					{
+						const Xsc::Reflection::DefaultValue& defVal = reflData.defaultValues[entry.defaultValue];
+
+						desc.addParameter(ident, ident, type, StringID::NONE, 1, 0, (UINT8*)defVal.matrix);
+					}
+				}
+			}
+				break;
+			case Xsc::Reflection::UniformType::Struct: break;
+			default: ;
+			}
+		}
+	}
+
+	String crossCompile(const String& hlsl, GpuProgramType type, bool vulkan, bool optionalEntry, UINT32& startBindingSlot,
+		SHADER_DESC* shaderDesc = nullptr, Vector<GpuProgramType>* detectedTypes = nullptr)
+	{
+		SPtr<StringStream> input = bs_shared_ptr_new<StringStream>();
+
+		if (vulkan)
+			*input << "#define VULKAN 1" << std::endl;
+		else
+			*input << "#define OPENGL 1" << std::endl;
+
+		*input << hlsl;
+
+		Xsc::ShaderInput inputDesc;
+		inputDesc.shaderVersion = Xsc::InputShaderVersion::HLSL5;
+		inputDesc.sourceCode = input;
+		inputDesc.extensions = Xsc::Extensions::LayoutAttribute;
+
+		switch (type)
+		{
+		case GPT_VERTEX_PROGRAM:
+			inputDesc.shaderTarget = Xsc::ShaderTarget::VertexShader;
+			inputDesc.entryPoint = "vsmain";
+			break;
+		case GPT_GEOMETRY_PROGRAM:
+			inputDesc.shaderTarget = Xsc::ShaderTarget::GeometryShader;
+			inputDesc.entryPoint = "gsmain";
+			break;
+		case GPT_HULL_PROGRAM:
+			inputDesc.shaderTarget = Xsc::ShaderTarget::TessellationControlShader;
+			inputDesc.entryPoint = "hsmain";
+			break;
+		case GPT_DOMAIN_PROGRAM:
+			inputDesc.shaderTarget = Xsc::ShaderTarget::TessellationEvaluationShader;
+			inputDesc.entryPoint = "dsmain";
+			break;
+		case GPT_FRAGMENT_PROGRAM:
+			inputDesc.shaderTarget = Xsc::ShaderTarget::FragmentShader;
+			inputDesc.entryPoint = "fsmain";
+			break;
+		case GPT_COMPUTE_PROGRAM:
+			inputDesc.shaderTarget = Xsc::ShaderTarget::ComputeShader;
+			inputDesc.entryPoint = "csmain";
+			break;
+		}
+
+		StringStream output;
+
+		Xsc::ShaderOutput outputDesc;
+		outputDesc.sourceCode = &output;
+		outputDesc.options.autoBinding = vulkan;
+		outputDesc.options.autoBindingStartSlot = startBindingSlot;
+		outputDesc.options.separateShaders = true;
+		outputDesc.options.separateSamplers = false;
+		outputDesc.nameMangling.inputPrefix = "bs_";
+		outputDesc.nameMangling.useAlwaysSemantics = true;
+		outputDesc.nameMangling.renameBufferFields = true;
+
+		if (vulkan)
+			outputDesc.shaderVersion = Xsc::OutputShaderVersion::VKSL450;
+		else
+			outputDesc.shaderVersion = Xsc::OutputShaderVersion::GLSL450;
+
+		XscLog log;
+		Xsc::Reflection::ReflectionData reflectionData;
+		bool compileSuccess = Xsc::CompileShader(inputDesc, outputDesc, &log, &reflectionData);
+		if (!compileSuccess)
+		{
+			// If enabled, don't fail if entry point isn't found
+			bool done = true;
+			if(optionalEntry)
+			{
+				bool entryFound = false;
+				for (auto& entry : reflectionData.functions)
+				{
+					if(entry.ident == inputDesc.entryPoint)
+					{
+						entryFound = true;
+						break;
+					}
+				}
+
+				if (!entryFound)
+					done = false;
+			}
+
+			if (done)
+			{
+				StringStream logOutput;
+				log.getMessages(logOutput);
+
+				LOGERR("Shader cross compilation failed. Log: \n\n" + logOutput.str());
+				return "";
+			}
+		}
+
+		for (auto& entry : reflectionData.constantBuffers)
+			startBindingSlot = std::max(startBindingSlot, entry.location + 1u);
+
+		for (auto& entry : reflectionData.textures)
+			startBindingSlot = std::max(startBindingSlot, entry.location + 1u);
+
+		for (auto& entry : reflectionData.storageBuffers)
+			startBindingSlot = std::max(startBindingSlot, entry.location + 1u);
+
+		if(detectedTypes != nullptr)
+		{
+			for(auto& entry : reflectionData.functions)
+			{
+				if (entry.ident == "vsmain")
+					detectedTypes->push_back(GPT_VERTEX_PROGRAM);
+				else if (entry.ident == "fsmain")
+					detectedTypes->push_back(GPT_FRAGMENT_PROGRAM);
+				else if (entry.ident == "gsmain")
+					detectedTypes->push_back(GPT_GEOMETRY_PROGRAM);
+				else if (entry.ident == "dsmain")
+					detectedTypes->push_back(GPT_DOMAIN_PROGRAM);
+				else if (entry.ident == "hsmain")
+					detectedTypes->push_back(GPT_HULL_PROGRAM);
+				else if (entry.ident == "csmain")
+					detectedTypes->push_back(GPT_COMPUTE_PROGRAM);
+			}
+
+			// If no entry points found, and error occurred, report error
+			if(!compileSuccess && detectedTypes->size() == 0)
+			{
+				StringStream logOutput;
+				log.getMessages(logOutput);
+
+				LOGERR("Shader cross compilation failed. Log: \n\n" + logOutput.str());
+				return "";
+			}
+		}
+
+		if (shaderDesc != nullptr)
+			parseParameters(reflectionData, *shaderDesc);
+
+		return output.str();
+	}
+
+	// Convert HLSL code to GLSL
+	String HLSLtoGLSL(const String& hlsl, GpuProgramType type, bool vulkan, UINT32& startBindingSlot)
+	{
+		return crossCompile(hlsl, type, vulkan, false, startBindingSlot);
+	}
+
+	void reflectHLSL(const String& hlsl, SHADER_DESC& shaderDesc, Vector<GpuProgramType>& entryPoints)
+	{
+		UINT32 dummy = 0;
+		crossCompile(hlsl, GPT_VERTEX_PROGRAM, false, true, dummy, &shaderDesc, &entryPoints);
+	}
+
+	BSLFXCompileResult BSLFXCompiler::compile(const String& name, const String& source, 
+		const UnorderedMap<String, String>& defines)
 	{
 		BSLFXCompileResult output;
 
@@ -115,7 +685,7 @@ namespace bs
 				codeString = codeString->next;
 			}
 
-			output = parseShader("Shader", parseState, codeBlocks);
+			output = parseShader(name, parseState, codeBlocks);
 
 			StringStream gpuProgError;
 			bool hasError = false;
@@ -157,7 +727,6 @@ namespace bs
 
 			if (hasError)
 			{
-				output.shader = nullptr;
 				output.errorMessage = "Failed compiling GPU program(s): " + gpuProgError.str();
 				output.errorLine = 0;
 				output.errorColumn = 0;
@@ -195,7 +764,8 @@ namespace bs
 		TechniqueMetaData metaData;
 
 		metaData.renderer = RendererAny;
-		metaData.language = "Any";
+		metaData.language = "hlsl";
+		metaData.isMixin = technique->type == NT_Mixin;
 
 		for (int i = 0; i < technique->options->count; i++)
 		{
@@ -205,9 +775,6 @@ namespace bs
 			{
 			case OT_Renderer:
 				metaData.renderer = parseRenderer(removeQuotes(option->value.strValue));
-				break;
-			case OT_Language:
-				parseLanguage(removeQuotes(option->value.strValue), metaData.language);
 				break;
 			case OT_Tags:
 			{
@@ -221,11 +788,11 @@ namespace bs
 				}
 			}
 				break;
-			case OT_Base:
-				metaData.baseName = removeQuotes(option->value.strValue);
+			case OT_Identifier:
+				metaData.name = option->value.strValue;
 				break;
-			case OT_Inherits:
-				metaData.inherits.push_back(removeQuotes(option->value.strValue));
+			case OT_Mixin:
+				metaData.includes.push_back(option->value.strValue);
 				break;
 			default:
 				break;
@@ -245,58 +812,15 @@ namespace bs
 		return RendererAny;
 	}
 
-	void BSLFXCompiler::parseLanguage(const String& name, String& language)
-	{
-		if (name == "HLSL" || name == "HLSL11")
-			language = "hlsl";
-		else if (name == "HLSL9")
-			language = "hlsl9";
-		else if (name == "GLSL")
-			language = "glsl";
-		else // "Any"
-			language = "";
-	}
-
-	GpuParamBlockUsage BSLFXCompiler::parseBlockUsage(BufferUsageValue usage)
-	{
-		if (usage == BUV_Dynamic)
-			return GPBU_DYNAMIC;
-
-		return GPBU_STATIC;
-	}
-
-	UINT32 BSLFXCompiler::parseFilterMode(FilterValue filter)
-	{
-		switch (filter)
-		{
-		case FV_Point:
-			return FO_POINT;
-		case FV_Linear:
-			return FO_LINEAR;
-		case FV_Anisotropic:
-			return FO_ANISOTROPIC;
-		case FV_PointCmp:
-			return FO_POINT | FO_USE_COMPARISON;
-		case FV_LinearCmp:
-			return FO_LINEAR | FO_USE_COMPARISON;
-		case FV_AnisotropicCmp:
-			return FO_ANISOTROPIC | FO_USE_COMPARISON;
-		default:
-			break;
-		}
-
-		return FO_NONE;
-	}
-
-	QueueSortType BSLFXCompiler::parseSortType(QueueSortTypeValue sortType)
+	QueueSortType BSLFXCompiler::parseSortType(CullAndSortModeValue sortType)
 	{
 		switch (sortType)
 		{
-		case QST_BackToFront:
+		case CASV_BackToFront:
 			return QueueSortType::BackToFront;
-		case QST_FrontToBack:
+		case CASV_FrontToBack:
 			return QueueSortType::FrontToBack;
-		case QST_None:
+		case CASV_None:
 			return QueueSortType::None;
 		}
 
@@ -326,23 +850,6 @@ namespace bs
 		}
 
 		return CMPF_ALWAYS_PASS;
-	}
-
-	TextureAddressingMode BSLFXCompiler::parseAddrMode(AddrModeValue addrMode)
-	{
-		switch (addrMode)
-		{
-		case AMV_Wrap:
-			return TAM_WRAP;
-		case AMV_Mirror:
-			return TAM_MIRROR;
-		case AMV_Clamp:
-			return TAM_CLAMP;
-		case AMV_Border:
-			return TAM_BORDER;
-		}
-
-		return TAM_WRAP;
 	}
 
 	BlendFactor BSLFXCompiler::parseBlendFactor(OpValue factor)
@@ -395,74 +902,6 @@ namespace bs
 		return BO_ADD;
 	}
 
-	void BSLFXCompiler::parseParamType(ParamType type, bool& isObjType, UINT32& typeId)
-	{
-		struct ParamData
-		{
-			UINT32 type;
-			bool isObjType;
-		};
-
-		static bool initialized = false;
-		static ParamData lookup[PT_Count];
-
-		if (!initialized)
-		{
-			lookup[PT_Float] = { GPDT_FLOAT1, false };
-			lookup[PT_Float2] = { GPDT_FLOAT2, false };
-			lookup[PT_Float3] = { GPDT_FLOAT3, false };
-			lookup[PT_Float4] = { GPDT_FLOAT4, false };
-
-			lookup[PT_Int] = { GPDT_INT1, false };
-			lookup[PT_Int2] = { GPDT_INT2, false };
-			lookup[PT_Int3] = { GPDT_INT3, false };
-			lookup[PT_Int4] = { GPDT_INT4, false };
-			lookup[PT_Color] = { GPDT_COLOR, false };
-
-			lookup[PT_Mat2x2] = { GPDT_MATRIX_2X2, false };
-			lookup[PT_Mat2x3] = { GPDT_MATRIX_2X3, false };
-			lookup[PT_Mat2x4] = { GPDT_MATRIX_2X4, false };
-
-			lookup[PT_Mat3x2] = { GPDT_MATRIX_3X2, false };
-			lookup[PT_Mat3x3] = { GPDT_MATRIX_3X3, false };
-			lookup[PT_Mat3x4] = { GPDT_MATRIX_3X4, false };
-
-			lookup[PT_Mat4x2] = { GPDT_MATRIX_4X2, false };
-			lookup[PT_Mat4x3] = { GPDT_MATRIX_4X3, false };
-			lookup[PT_Mat4x4] = { GPDT_MATRIX_4X4, false };
-
-			lookup[PT_Sampler1D] = { GPOT_SAMPLER1D, true };
-			lookup[PT_Sampler2D] = { GPOT_SAMPLER2D, true };
-			lookup[PT_Sampler3D] = { GPOT_SAMPLER3D, true };
-			lookup[PT_SamplerCUBE] = { GPOT_SAMPLERCUBE, true };
-			lookup[PT_Sampler2DMS] = { GPOT_SAMPLER2DMS, true };
-
-			lookup[PT_Texture1D] = { GPOT_TEXTURE1D, true };
-			lookup[PT_Texture2D] = { GPOT_TEXTURE2D, true };
-			lookup[PT_Texture3D] = { GPOT_TEXTURE3D, true };
-			lookup[PT_TextureCUBE] = { GPOT_TEXTURECUBE, true };
-			lookup[PT_Texture2DMS] = { GPOT_TEXTURE2DMS, true };
-
-			lookup[PT_RWTexture1D] = { GPOT_RWTEXTURE1D, true };
-			lookup[PT_RWTexture2D] = { GPOT_RWTEXTURE2D, true };
-			lookup[PT_RWTexture3D] = { GPOT_RWTEXTURE3D, true };
-			lookup[PT_RWTexture2DMS] = { GPOT_RWTEXTURE2DMS, true };
-
-			lookup[PT_ByteBuffer] = { GPOT_BYTE_BUFFER, true };
-			lookup[PT_StructBuffer] = { GPOT_STRUCTURED_BUFFER, true };
-			lookup[PT_TypedBufferRW] = { GPOT_RWTYPED_BUFFER, true };
-			lookup[PT_ByteBufferRW] = { GPOT_RWBYTE_BUFFER, true };
-			lookup[PT_StructBufferRW] = { GPOT_RWSTRUCTURED_BUFFER, true };
-			lookup[PT_AppendBuffer] = { GPOT_RWAPPEND_BUFFER, true };
-			lookup[PT_ConsumeBuffer] = { GPOT_RWCONSUME_BUFFER, true };
-
-			initialized = true;
-		}
-
-		isObjType = lookup[type].isObjType;
-		typeId = lookup[type].type;
-	}
-
 	StencilOperation BSLFXCompiler::parseStencilOp(OpValue op)
 	{
 		switch (op)
@@ -490,15 +929,15 @@ namespace bs
 		return SOP_KEEP;
 	}
 
-	CullingMode BSLFXCompiler::parseCullMode(CullModeValue cm)
+	CullingMode BSLFXCompiler::parseCullMode(CullAndSortModeValue cm)
 	{
 		switch (cm)
 		{
-		case CMV_None:
+		case CASV_None:
 			return CULL_NONE;
-		case CMV_CW:
+		case CASV_CW:
 			return CULL_CLOCKWISE;
-		case CMV_CCW:
+		case CASV_CCW:
 			return CULL_COUNTERCLOCKWISE;
 		}
 
@@ -564,32 +1003,6 @@ namespace bs
 				break;
 			case OT_CompareFunc:
 				desc.backStencilComparisonFunc = parseCompFunc((CompFuncValue)option->value.intValue);
-				break;
-			default:
-				break;
-			}
-		}
-	}
-
-	void BSLFXCompiler::parseAddrMode(SAMPLER_STATE_DESC& desc, ASTFXNode* addrModeNode)
-	{
-		if (addrModeNode == nullptr || addrModeNode->type != NT_AddrMode)
-			return;
-
-		for (int i = 0; i < addrModeNode->options->count; i++)
-		{
-			NodeOption* option = &addrModeNode->options->entries[i];
-
-			switch (option->type)
-			{
-			case OT_U:
-				desc.addressMode.u = parseAddrMode((AddrModeValue)option->value.intValue);
-				break;
-			case OT_V:
-				desc.addressMode.v = parseAddrMode((AddrModeValue)option->value.intValue);
-				break;
-			case OT_W:
-				desc.addressMode.w = parseAddrMode((AddrModeValue)option->value.intValue);
 				break;
 			default:
 				break;
@@ -680,7 +1093,7 @@ namespace bs
 
 			switch (option->type)
 			{
-			case OT_Blend:
+			case OT_Enabled:
 				rtDesc.blendEnable = option->value.intValue > 0;
 				break;
 			case OT_Color:
@@ -698,29 +1111,29 @@ namespace bs
 		}
 	}
 
-	bool BSLFXCompiler::parseBlendState(BLEND_STATE_DESC& desc, ASTFXNode* passNode)
+	bool BSLFXCompiler::parseBlendState(PassData& desc, ASTFXNode* blendNode)
 	{
-		if (passNode == nullptr || (passNode->type != NT_Pass && passNode->type != NT_Technique))
+		if (blendNode == nullptr || blendNode->type != NT_Blend)
 			return false;
 
 		bool isDefault = true;
 
-		for (int i = 0; i < passNode->options->count; i++)
+		for (int i = 0; i < blendNode->options->count; i++)
 		{
-			NodeOption* option = &passNode->options->entries[i];
+			NodeOption* option = &blendNode->options->entries[i];
 
 			switch (option->type)
 			{
 			case OT_AlphaToCoverage:
-				desc.alphaToCoverageEnable = option->value.intValue > 0;
+				desc.blendDesc.alphaToCoverageEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			case OT_IndependantBlend:
-				desc.independantBlendEnable = option->value.intValue > 0;
+				desc.blendDesc.independantBlendEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			case OT_Target:
-				parseRenderTargetBlendState(desc, option->value.nodePtr);
+				parseRenderTargetBlendState(desc.blendDesc, option->value.nodePtr);
 				isDefault = false;
 				break;
 			default:
@@ -731,49 +1144,49 @@ namespace bs
 		return !isDefault;
 	}
 
-	bool BSLFXCompiler::parseRasterizerState(RASTERIZER_STATE_DESC& desc, ASTFXNode* passNode)
+	bool BSLFXCompiler::parseRasterizerState(PassData& desc, ASTFXNode* rasterNode)
 	{
-		if (passNode == nullptr || (passNode->type != NT_Pass && passNode->type != NT_Technique))
+		if (rasterNode == nullptr || rasterNode->type != NT_Raster)
 			return false;
 
 		bool isDefault = true;
 
-		for (int i = 0; i < passNode->options->count; i++)
+		for (int i = 0; i < rasterNode->options->count; i++)
 		{
-			NodeOption* option = &passNode->options->entries[i];
+			NodeOption* option = &rasterNode->options->entries[i];
 
 			switch (option->type)
 			{
 			case OT_FillMode:
-				desc.polygonMode = parseFillMode((FillModeValue)option->value.intValue);
+				desc.rasterizerDesc.polygonMode = parseFillMode((FillModeValue)option->value.intValue);
 				isDefault = false;
 				break;
 			case OT_CullMode:
-				desc.cullMode = parseCullMode((CullModeValue)option->value.intValue);
+				desc.rasterizerDesc.cullMode = parseCullMode((CullAndSortModeValue)option->value.intValue);
 				isDefault = false;
 				break;
 			case OT_DepthBias:
-				desc.depthBias = option->value.floatValue;
+				desc.rasterizerDesc.depthBias = option->value.floatValue;
 				isDefault = false;
 				break;
 			case OT_SDepthBias:
-				desc.slopeScaledDepthBias = option->value.floatValue;
+				desc.rasterizerDesc.slopeScaledDepthBias = option->value.floatValue;
 				isDefault = false;
 				break;
 			case OT_DepthClip:
-				desc.depthClipEnable = option->value.intValue > 0;
+				desc.rasterizerDesc.depthClipEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			case OT_Scissor:
-				desc.scissorEnable = option->value.intValue > 0;
+				desc.rasterizerDesc.scissorEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			case OT_Multisample:
-				desc.multisampleEnable = option->value.intValue > 0;
+				desc.rasterizerDesc.multisampleEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			case OT_AALine:
-				desc.antialiasedLineEnable = option->value.intValue > 0;
+				desc.rasterizerDesc.antialiasedLineEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			default:
@@ -784,49 +1197,29 @@ namespace bs
 		return !isDefault;
 	}
 
-	bool BSLFXCompiler::parseDepthStencilState(DEPTH_STENCIL_STATE_DESC& desc, ASTFXNode* passNode)
+	bool BSLFXCompiler::parseDepthState(PassData& passData, ASTFXNode* depthNode)
 	{
-		if (passNode == nullptr || (passNode->type != NT_Pass && passNode->type != NT_Technique))
+		if (depthNode == nullptr || depthNode->type != NT_Depth)
 			return false;
 
 		bool isDefault = true;
 
-		for (int i = 0; i < passNode->options->count; i++)
+		for (int i = 0; i < depthNode->options->count; i++)
 		{
-			NodeOption* option = &passNode->options->entries[i];
+			NodeOption* option = &depthNode->options->entries[i];
 
 			switch (option->type)
 			{
 			case OT_DepthRead:
-				desc.depthReadEnable = option->value.intValue > 0;
+				passData.depthStencilDesc.depthReadEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			case OT_DepthWrite:
-				desc.depthWriteEnable = option->value.intValue > 0;
+				passData.depthStencilDesc.depthWriteEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
 			case OT_CompareFunc:
-				desc.depthComparisonFunc = parseCompFunc((CompFuncValue)option->value.intValue);
-				isDefault = false;
-				break;
-			case OT_Stencil:
-				desc.stencilEnable = option->value.intValue > 0;
-				isDefault = false;
-				break;
-			case OT_StencilReadMask:
-				desc.stencilReadMask = (UINT8)option->value.intValue;
-				isDefault = false;
-				break;
-			case OT_StencilWriteMask:
-				desc.stencilWriteMask = (UINT8)option->value.intValue;
-				isDefault = false;
-				break;
-			case OT_StencilOpFront:
-				parseStencilFront(desc, option->value.nodePtr);
-				isDefault = false;
-				break;
-			case OT_StencilOpBack:
-				parseStencilBack(desc, option->value.nodePtr);
+				passData.depthStencilDesc.depthComparisonFunc = parseCompFunc((CompFuncValue)option->value.intValue);
 				isDefault = false;
 				break;
 			default:
@@ -837,77 +1230,53 @@ namespace bs
 		return !isDefault;
 	}
 
-	SPtr<SamplerState> BSLFXCompiler::parseSamplerState(ASTFXNode* samplerStateNode)
+	bool BSLFXCompiler::parseStencilState(PassData& passData, ASTFXNode* stencilNode)
 	{
-		if (samplerStateNode == nullptr || samplerStateNode->type != NT_SamplerState)
-			return nullptr;
+		if (stencilNode == nullptr || stencilNode->type != NT_Stencil)
+			return false;
 
-		SAMPLER_STATE_DESC desc;
 		bool isDefault = true;
 
-		for (int i = 0; i < samplerStateNode->options->count; i++)
+		for (int i = 0; i < stencilNode->options->count; i++)
 		{
-			NodeOption* option = &samplerStateNode->options->entries[i];
+			NodeOption* option = &stencilNode->options->entries[i];
 
 			switch (option->type)
 			{
-			case OT_AddrMode:
-				parseAddrMode(desc, option->value.nodePtr);
+			case OT_Enabled:
+				passData.depthStencilDesc.stencilEnable = option->value.intValue > 0;
 				isDefault = false;
 				break;
-			case OT_MinFilter:
-				desc.minFilter = (FilterOptions)parseFilterMode((FilterValue)option->value.intValue);
+			case OT_StencilReadMask:
+				passData.depthStencilDesc.stencilReadMask = (UINT8)option->value.intValue;
 				isDefault = false;
 				break;
-			case OT_MagFilter:
-				desc.magFilter = (FilterOptions)parseFilterMode((FilterValue)option->value.intValue);
+			case OT_StencilWriteMask:
+				passData.depthStencilDesc.stencilWriteMask = (UINT8)option->value.intValue;
 				isDefault = false;
 				break;
-			case OT_MipFilter:
-				desc.mipFilter = (FilterOptions)parseFilterMode((FilterValue)option->value.intValue);
+			case OT_StencilOpFront:
+				parseStencilFront(passData.depthStencilDesc, option->value.nodePtr);
 				isDefault = false;
 				break;
-			case OT_MaxAniso:
-				desc.maxAniso = option->value.intValue;
+			case OT_StencilOpBack:
+				parseStencilBack(passData.depthStencilDesc, option->value.nodePtr);
 				isDefault = false;
 				break;
-			case OT_MipBias:
-				desc.mipmapBias = option->value.floatValue;
-				isDefault = false;
-				break;
-			case OT_MipMin:
-				desc.mipMin = option->value.floatValue;
-				isDefault = false;
-				break;
-			case OT_MipMax:
-				desc.mipMax = option->value.floatValue;
-				isDefault = false;
-				break;
-			case OT_BorderColor:
-				desc.borderColor = Color(option->value.matrixValue[0], option->value.matrixValue[1],
-					option->value.matrixValue[2], option->value.matrixValue[3]);
-				isDefault = false;
-				break;
-			case OT_CompareFunc:
-				desc.comparisonFunc = parseCompFunc((CompFuncValue)option->value.intValue);
-				isDefault = false;
+			case OT_StencilRef:
+				passData.stencilRefValue = option->value.intValue;
 				break;
 			default:
 				break;
 			}
 		}
 
-		if (isDefault)
-			return nullptr;
-
-		return SamplerState::create(desc);
+		return !isDefault;
 	}
-
+	
 	void BSLFXCompiler::parseCodeBlock(ASTFXNode* codeNode, const Vector<String>& codeBlocks, PassData& passData)
 	{
-		if (codeNode == nullptr || (codeNode->type != NT_CodeCommon && codeNode->type != NT_CodeVertex && 
-			codeNode->type != NT_CodeFragment && codeNode->type != NT_CodeGeometry && codeNode->type != NT_CodeHull &&
-			codeNode->type != NT_CodeDomain && codeNode->type != NT_CodeCompute))
+		if (codeNode == nullptr || (codeNode->type != NT_Code))
 		{
 			return;
 		}
@@ -923,26 +1292,8 @@ namespace bs
 		{
 			switch (codeNode->type)
 			{
-			case NT_CodeVertex:
-				passData.vertexCode += codeBlocks[index];
-				break;
-			case NT_CodeFragment:
-				passData.fragmentCode += codeBlocks[index];
-				break;
-			case NT_CodeGeometry:
-				passData.geometryCode += codeBlocks[index];
-				break;
-			case NT_CodeHull:
-				passData.hullCode += codeBlocks[index];
-				break;
-			case NT_CodeDomain:
-				passData.domainCode += codeBlocks[index];
-				break;
-			case NT_CodeCompute:
-				passData.computeCode += codeBlocks[index];
-				break;
-			case NT_CodeCommon:
-				passData.commonCode += codeBlocks[index];
+			case NT_Code:
+				passData.code += codeBlocks[index];
 				break;
 			default:
 				break;
@@ -955,18 +1306,23 @@ namespace bs
 		if (passNode == nullptr || passNode->type != NT_Pass)
 			return;
 
-		passData.blendIsDefault &= !parseBlendState(passData.blendDesc, passNode);
-		passData.rasterizerIsDefault &= !parseRasterizerState(passData.rasterizerDesc, passNode);
-		passData.depthStencilIsDefault &= !parseDepthStencilState(passData.depthStencilDesc, passNode);
-
 		for (int i = 0; i < passNode->options->count; i++)
 		{
 			NodeOption* option = &passNode->options->entries[i];
 
 			switch (option->type)
 			{
-			case OT_StencilRef:
-				passData.stencilRefValue = option->value.intValue;
+			case OT_Blend:
+				passData.blendIsDefault &= !parseBlendState(passData, option->value.nodePtr);
+				break;
+			case OT_Raster:
+				passData.rasterizerIsDefault &= !parseRasterizerState(passData, option->value.nodePtr);
+				break;
+			case OT_Depth:
+				passData.depthStencilIsDefault &= !parseDepthState(passData, option->value.nodePtr);
+				break;
+			case OT_Stencil:
+				passData.depthStencilIsDefault &= !parseStencilState(passData, option->value.nodePtr);
 				break;
 			case OT_Code:
 				parseCodeBlock(option->value.nodePtr, codeBlocks, passData);
@@ -979,8 +1335,15 @@ namespace bs
 
 	void BSLFXCompiler::parseTechnique(ASTFXNode* techniqueNode, const Vector<String>& codeBlocks, TechniqueData& techniqueData)
 	{
-		if (techniqueNode == nullptr || techniqueNode->type != NT_Technique)
+		if (techniqueNode == nullptr || (techniqueNode->type != NT_Technique && techniqueNode->type != NT_Mixin))
 			return;
+
+		// There must always be at least one pass
+		if(techniqueData.passes.empty())
+		{
+			techniqueData.passes.push_back(PassData());
+			techniqueData.passes.back().seqIdx = 0;
+		}
 
 		PassData combinedCommonPassData;
 
@@ -995,22 +1358,6 @@ namespace bs
 			case OT_Pass:
 			{
 				UINT32 passIdx = nextPassIdx;
-
-				ASTFXNode* passNode = option->value.nodePtr;
-				for (int j = 0; j < passNode->options->count; j++)
-				{
-					NodeOption* passOption = &passNode->options->entries[j];
-
-					switch (passOption->type)
-					{
-					case OT_Index:
-						passIdx = passOption->value.intValue;
-						break;
-					default:
-						break;
-					}
-				}
-
 				PassData* passData = nullptr;
 				for (auto& entry : techniqueData.passes)
 				{
@@ -1027,15 +1374,9 @@ namespace bs
 				}
 
 				nextPassIdx = std::max(nextPassIdx, passIdx) + 1;
-
-				passData->vertexCode = combinedCommonPassData.vertexCode + passData->vertexCode;
-				passData->fragmentCode = combinedCommonPassData.fragmentCode + passData->fragmentCode;
-				passData->geometryCode = combinedCommonPassData.geometryCode + passData->geometryCode;
-				passData->hullCode = combinedCommonPassData.hullCode + passData->hullCode;
-				passData->domainCode = combinedCommonPassData.domainCode + passData->domainCode;
-				passData->computeCode = combinedCommonPassData.computeCode + passData->computeCode;
-				passData->commonCode = combinedCommonPassData.commonCode + passData->commonCode;
+				passData->code = combinedCommonPassData.code + passData->code;
 				
+				ASTFXNode* passNode = option->value.nodePtr;
 				parsePass(passNode, codeBlocks, *passData);
 			}
 				break;
@@ -1045,23 +1386,9 @@ namespace bs
 				parseCodeBlock(option->value.nodePtr, codeBlocks, commonPassData);
 
 				for (auto& passData : techniqueData.passes)
-				{
-					passData.vertexCode += commonPassData.vertexCode;
-					passData.fragmentCode += commonPassData.fragmentCode;
-					passData.geometryCode += commonPassData.geometryCode;
-					passData.hullCode += commonPassData.hullCode;
-					passData.domainCode += commonPassData.domainCode;
-					passData.computeCode += commonPassData.computeCode;
-					passData.commonCode += commonPassData.commonCode;
-				}
+					passData.code += commonPassData.code;
 
-				combinedCommonPassData.vertexCode += commonPassData.vertexCode;
-				combinedCommonPassData.fragmentCode += commonPassData.fragmentCode;
-				combinedCommonPassData.geometryCode += commonPassData.geometryCode;
-				combinedCommonPassData.hullCode += commonPassData.hullCode;
-				combinedCommonPassData.domainCode += commonPassData.domainCode;
-				combinedCommonPassData.computeCode += commonPassData.computeCode;
-				combinedCommonPassData.commonCode += commonPassData.commonCode;
+				combinedCommonPassData.code += commonPassData.code;
 			}
 				break;
 			default:
@@ -1070,166 +1397,63 @@ namespace bs
 		}
 
 		// Parse common pass states
-		for (auto& passData : techniqueData.passes)
+		for (int i = 0; i < techniqueNode->options->count; i++)
 		{
-			passData.blendIsDefault &= !parseBlendState(passData.blendDesc, techniqueNode);
-			passData.rasterizerIsDefault &= !parseRasterizerState(passData.rasterizerDesc, techniqueNode);
-			passData.depthStencilIsDefault &= !parseDepthStencilState(passData.depthStencilDesc, techniqueNode);
+			NodeOption* option = &techniqueNode->options->entries[i];
+
+			switch (option->type)
+			{
+			case OT_Blend:
+				for (auto& passData : techniqueData.passes)
+					passData.blendIsDefault &= !parseBlendState(passData, option->value.nodePtr);
+				break;
+			case OT_Raster:
+				for (auto& passData : techniqueData.passes)
+					passData.rasterizerIsDefault &= !parseRasterizerState(passData, option->value.nodePtr);
+				break;
+			case OT_Depth:
+				for (auto& passData : techniqueData.passes)
+					passData.depthStencilIsDefault &= !parseDepthState(passData, option->value.nodePtr);
+				break;
+			case OT_Stencil:
+				for (auto& passData : techniqueData.passes)
+					passData.depthStencilIsDefault &= !parseStencilState(passData, option->value.nodePtr);
+				break;
+			default:
+				break;
+			}
 		}
 	}
 
-	void BSLFXCompiler::parseParameters(SHADER_DESC& desc, ASTFXNode* parametersNode)
+	void BSLFXCompiler::parseOptions(ASTFXNode* optionsNode, SHADER_DESC& shaderDesc)
 	{
-		if (parametersNode == nullptr || parametersNode->type != NT_Parameters)
+		if (optionsNode == nullptr || optionsNode->type != NT_Options)
 			return;
 
-		for (int i = 0; i < parametersNode->options->count; i++)
+		for (int i = optionsNode->options->count - 1; i >= 0; i--)
 		{
-			NodeOption* option = &parametersNode->options->entries[i];
+			NodeOption* option = &optionsNode->options->entries[i];
 
-			if (option->type != OT_Parameter)
-				continue;
-
-			ASTFXNode* parameter = option->value.nodePtr;
-
-			String name;
-			String alias;
-
-			UINT32 typeId = 0;
-			bool isObjType = false;
-			StringID semantic;
-			SPtr<SamplerState> samplerState = nullptr;
-			float defaultValue[16];
-			HTexture defaultTexture;
-			bool hasDefaultValue = false;
-			for (int j = 0; j < parameter->options->count; j++)
+			switch (option->type)
 			{
-				NodeOption* paramOption = &parameter->options->entries[j];
-
-				switch (paramOption->type)
-				{
-				case OT_Identifier:
-					name = paramOption->value.strValue;
-					break;
-				case OT_Alias:
-					alias = removeQuotes(paramOption->value.strValue);
-					break;
-				case OT_ParamType:
-					parseParamType((ParamType)paramOption->value.intValue, isObjType, typeId);
-					break;
-				case OT_ParamValue:
-					memcpy(defaultValue, paramOption->value.matrixValue, sizeof(defaultValue));
-					hasDefaultValue = true;
-					break;
-				case OT_ParamStrValue:
-				{
-					String defaultTextureName = removeQuotes(paramOption->value.strValue);
-					defaultTexture = getBuiltinTexture(defaultTextureName);
-					hasDefaultValue = true;
-				}
-					break;
-				case OT_Auto:
-					semantic = removeQuotes(paramOption->value.strValue);
-					break;
-				case OT_SamplerState:
-					samplerState = parseSamplerState(paramOption->value.nodePtr);
-					break;
-				default:
-					break;
-				}
+			case OT_Separable:
+				shaderDesc.separablePasses = option->value.intValue > 1;
+				break;
+			case OT_Sort:
+				shaderDesc.queueSortType = parseSortType((CullAndSortModeValue)option->value.intValue);
+				break;
+			case OT_Priority:
+				shaderDesc.queuePriority = option->value.intValue;
+				break;
+			case OT_Transparent:
+				shaderDesc.flags |= (UINT32)ShaderFlags::Transparent;
+				break;
+			default:
+				break;
 			}
-
-			if (name.empty())
-				continue;
-
-			auto addParameter = [&](const String& paramName, const String& gpuVarName)
-			{
-				if (isObjType)
-				{
-					GpuParamObjectType objType = (GpuParamObjectType)typeId;
-
-					if (Shader::isSampler(objType))
-					{
-						if(hasDefaultValue)
-							desc.addParameter(paramName, gpuVarName, objType, samplerState, semantic);
-						else
-							desc.addParameter(paramName, gpuVarName, objType, semantic);
-					}
-					else if(Shader::isTexture(objType))
-					{
-						if(hasDefaultValue)
-							desc.addParameter(paramName, gpuVarName, objType, defaultTexture, semantic);
-						else
-							desc.addParameter(paramName, gpuVarName, objType, semantic);
-					}
-					else
-						desc.addParameter(paramName, gpuVarName, objType, semantic);
-				}
-				else
-				{
-					if (hasDefaultValue)
-						desc.addParameter(paramName, gpuVarName, (GpuParamDataType)typeId, semantic, 1, 0, (UINT8*)defaultValue);
-					else
-						desc.addParameter(paramName, gpuVarName, (GpuParamDataType)typeId, semantic);
-				}
-			};
-
-			addParameter(name, name);
-
-			if (!alias.empty())
-				addParameter(name, alias);
 		}
 	}
 
-	void BSLFXCompiler::parseBlocks(SHADER_DESC& desc, ASTFXNode* blocksNode)
-	{
-		if (blocksNode == nullptr || blocksNode->type != NT_Blocks)
-			return;
-
-		for (int i = 0; i < blocksNode->options->count; i++)
-		{
-			NodeOption* option = &blocksNode->options->entries[i];
-
-			if (option->type != OT_Block)
-				continue;
-
-			ASTFXNode* parameter = option->value.nodePtr;
-
-			String name;
-			bool shared = false;
-			GpuParamBlockUsage usage = GPBU_STATIC;
-			StringID semantic;
-
-			for (int j = 0; j < parameter->options->count; j++)
-			{
-				NodeOption* paramOption = &parameter->options->entries[j];
-
-				switch (paramOption->type)
-				{
-				case OT_Identifier:
-					name = paramOption->value.strValue;
-					break;
-				case OT_Shared:
-					shared = paramOption->value.intValue > 0;
-					break;
-				case OT_Usage:
-					usage = parseBlockUsage((BufferUsageValue)paramOption->value.intValue);
-					break;
-				case OT_Auto:
-					semantic = removeQuotes(paramOption->value.strValue);
-					break;
-				default:
-					break;
-				}
-			}
-
-			if (name.empty())
-				continue;
-
-			desc.setParamBlockAttribs(name, shared, usage, semantic);
-		}
-	}
-	
 	BSLFXCompileResult BSLFXCompiler::parseShader(const String& name, ParseState* parseState, Vector<String>& codeBlocks)
 	{
 		BSLFXCompileResult output;
@@ -1252,90 +1476,186 @@ namespace bs
 
 			switch (option->type)
 			{
-			case OT_Separable:
-				shaderDesc.separablePasses = option->value.intValue > 1;
-				break;
-			case OT_Sort:
-				shaderDesc.queueSortType = parseSortType((QueueSortTypeValue)option->value.intValue);
-				break;
-			case OT_Priority:
-				shaderDesc.queuePriority = option->value.intValue;
-				break;
-			case OT_Transparent:
-				shaderDesc.flags |= (UINT32)ShaderFlags::Transparent;
+			case OT_Options:
+				parseOptions(option->value.nodePtr, shaderDesc);
 				break;
 			case OT_Technique:
 			{
+				// We initially parse only meta-data, so we can handle out-of-order technique definitions
 				TechniqueMetaData metaData = parseTechniqueMetaData(option->value.nodePtr);
 
 				techniqueData.push_back(std::make_pair(option->value.nodePtr, TechniqueData()));
 				TechniqueData& data = techniqueData.back().second;
 				data.metaData = metaData;
 
-				if (data.metaData.baseName.empty())
-				{
-					std::function<bool(TechniqueMetaData&)> parseInherited = [&](TechniqueMetaData& metaData)
-					{
-						for (auto riter = metaData.inherits.rbegin(); riter != metaData.inherits.rend(); ++riter)
-						{
-							const String& inherits = *riter;
-
-							bool foundBase = false;
-							for (auto& entry : techniqueData)
-							{
-								if (entry.second.metaData.baseName == inherits)
-								{
-									bool matches = entry.second.metaData.language == metaData.language || entry.second.metaData.language == "Any";
-									matches &= entry.second.metaData.renderer == metaData.renderer || entry.second.metaData.renderer == RendererAny;
-
-									if (matches)
-									{
-										if (!parseInherited(entry.second.metaData))
-											return false;
-
-										parseTechnique(entry.first, codeBlocks, data);
-										foundBase = true;
-										break;
-									}
-								}
-							}
-
-							if (!foundBase)
-							{
-								output.errorMessage = "Base technique \"" + inherits + "\" cannot be found.";
-								return false;
-							}
-						}
-
-						return true;
-					};
-
-					if (!parseInherited(metaData))
-					{
-						parseStateDelete(parseState);
-						return output;
-					}
-
-					parseTechnique(option->value.nodePtr, codeBlocks, data);
-				}
 				break;
 			}
-			case OT_Parameters:
-				parseParameters(shaderDesc, option->value.nodePtr);
-				break;
-			case OT_Blocks:
-				parseBlocks(shaderDesc, option->value.nodePtr);
-				break;
 			default:
 				break;
 			}
+		}
+
+		bool* techniqueWasParsed = bs_stack_alloc<bool>((UINT32)techniqueData.size());
+		std::function<bool(const TechniqueMetaData&, TechniqueData&)> parseInherited = 
+			[&](const TechniqueMetaData& metaData, TechniqueData& outTechnique)
+		{
+			for (auto riter = metaData.includes.rbegin(); riter != metaData.includes.rend(); ++riter)
+			{
+				const String& includes = *riter;
+
+				UINT32 baseIdx = -1;
+				for(UINT32 i = 0; i < (UINT32)techniqueData.size(); i++)
+				{
+					auto& entry = techniqueData[i];
+					if (!entry.second.metaData.isMixin)
+						continue;
+
+					if (entry.second.metaData.name == includes)
+					{
+						bool matches = entry.second.metaData.language == metaData.language || entry.second.metaData.language == "Any";
+						matches &= entry.second.metaData.renderer == metaData.renderer || entry.second.metaData.renderer == RendererAny;
+
+						// We want the last matching technique, in order to allow techniques to override each other
+						if (matches)
+							baseIdx = i;
+					}
+				}
+
+				if (baseIdx != -1)
+				{
+					auto& entry = techniqueData[baseIdx];
+
+					// Was already parsed previously, don't parse it multiple times (happens when multiple techniques 
+					// include the same mixin)
+					if (techniqueWasParsed[baseIdx])
+						continue;
+
+					if (!parseInherited(entry.second.metaData, outTechnique))
+						return false;
+
+					parseTechnique(entry.first, codeBlocks, outTechnique);
+					techniqueWasParsed[baseIdx] = true;
+					
+				}
+				else
+				{
+					output.errorMessage = "Mixin \"" + includes + "\" cannot be found.";
+					return false;
+				}
+			}
+
+			return true;
+		};
+
+
+		// Actually parse techniques
+		for (auto& entry : techniqueData)
+		{
+			const TechniqueMetaData& metaData = entry.second.metaData;
+			if (metaData.isMixin)
+				continue;
+
+			bs_zero_out(techniqueWasParsed, techniqueData.size());
+			if (!parseInherited(metaData, entry.second))
+			{
+				parseStateDelete(parseState);
+				return output;
+			}
+
+			parseTechnique(entry.first, codeBlocks, entry.second);
+		}
+
+		bs_stack_free(techniqueWasParsed);
+
+		// Parse extended HLSL code and generate per-program code, also convert to GLSL/VKSL
+		UINT32 end = (UINT32)techniqueData.size();
+		for(UINT32 i = 0; i < end; i++)
+		{
+			const TechniqueMetaData& metaData = techniqueData[i].second.metaData;
+			if (metaData.isMixin)
+				continue;
+
+			TechniqueData& hlslTechnique = techniqueData[i].second;
+
+			TechniqueData glslTechnique = techniqueData[i].second;
+			glslTechnique.metaData.language = "glsl";
+
+			TechniqueData vkslTechnique = techniqueData[i].second;
+			vkslTechnique.metaData.language = "vksl";
+
+			UINT32 numPasses = (UINT32)hlslTechnique.passes.size();
+
+			for(UINT32 j = 0; j < numPasses; j++)
+			{
+				PassData& hlslPassData = hlslTechnique.passes[j];
+				PassData& glslPassData = glslTechnique.passes[j];
+				PassData& vkslPassData = vkslTechnique.passes[j];
+
+				// Clean non-standard HLSL 
+				static const std::regex regex("\\[\\s*layout\\s*\\(.*\\)\\s*\\]|\\[\\s*internal\\s*\\]|\\[\\s*color\\s*\\]");
+				hlslPassData.code = regex_replace(hlslPassData.code, regex, "");
+
+				// Find valid entry points and parameters
+				// Note: XShaderCompiler needs to do a full pass when doing reflection, and for each individual program
+				// type. If performance is ever important here it could be good to update XShaderCompiler so it can
+				// somehow save the AST and then re-use it for multiple actions.
+				Vector<GpuProgramType> types;
+				reflectHLSL(glslPassData.code, shaderDesc, types);
+
+				UINT32 glslBinding = 0;
+				UINT32 vkslBinding = 0;
+
+				// Cross-compile for all detected shader types
+				// Note: I'm just copying HLSL code as-is. This code will contain all entry points which could have
+				// an effect on compile time. It would be ideal to remove dead code depending on program type. This would
+				// involve adding a HLSL code generator to XShaderCompiler.
+				for(auto& type : types)
+				{
+					switch(type)
+					{
+					case GPT_VERTEX_PROGRAM:
+						hlslPassData.vertexCode = hlslPassData.code;
+						glslPassData.vertexCode = HLSLtoGLSL(glslPassData.code, GPT_VERTEX_PROGRAM, false, glslBinding);
+						vkslPassData.vertexCode = HLSLtoGLSL(glslPassData.code, GPT_VERTEX_PROGRAM, true, vkslBinding);
+						break;
+					case GPT_FRAGMENT_PROGRAM:
+						hlslPassData.fragmentCode = hlslPassData.code;
+						glslPassData.fragmentCode = HLSLtoGLSL(glslPassData.code, GPT_FRAGMENT_PROGRAM, false, glslBinding);
+						vkslPassData.fragmentCode = HLSLtoGLSL(glslPassData.code, GPT_FRAGMENT_PROGRAM, true, vkslBinding);
+						break;
+					case GPT_GEOMETRY_PROGRAM:
+						hlslPassData.geometryCode = hlslPassData.code;
+						glslPassData.geometryCode = HLSLtoGLSL(glslPassData.code, GPT_GEOMETRY_PROGRAM, false, glslBinding);
+						vkslPassData.geometryCode = HLSLtoGLSL(glslPassData.code, GPT_GEOMETRY_PROGRAM, true, vkslBinding);
+						break;
+					case GPT_HULL_PROGRAM:
+						hlslPassData.hullCode = hlslPassData.code;
+						glslPassData.hullCode = HLSLtoGLSL(glslPassData.code, GPT_HULL_PROGRAM, false, glslBinding);
+						vkslPassData.hullCode = HLSLtoGLSL(glslPassData.code, GPT_HULL_PROGRAM, true, vkslBinding);
+						break;
+					case GPT_DOMAIN_PROGRAM:
+						hlslPassData.domainCode = hlslPassData.code;
+						glslPassData.domainCode = HLSLtoGLSL(glslPassData.code, GPT_DOMAIN_PROGRAM, false, glslBinding);
+						vkslPassData.domainCode = HLSLtoGLSL(glslPassData.code, GPT_DOMAIN_PROGRAM, true, vkslBinding);
+						break;
+					case GPT_COMPUTE_PROGRAM:
+						hlslPassData.computeCode = hlslPassData.code;
+						glslPassData.computeCode = HLSLtoGLSL(glslPassData.code, GPT_COMPUTE_PROGRAM, false, glslBinding);
+						vkslPassData.computeCode = HLSLtoGLSL(glslPassData.code, GPT_COMPUTE_PROGRAM, true, vkslBinding);
+						break;
+					}
+				}
+			}
+
+			techniqueData.push_back(std::make_pair(techniqueData[i].first, glslTechnique));
+			techniqueData.push_back(std::make_pair(techniqueData[i].first, vkslTechnique));
 		}
 
 		Vector<SPtr<Technique>> techniques;
 		for(auto& entry : techniqueData)
 		{
 			const TechniqueMetaData& metaData = entry.second.metaData;
-			if (!metaData.baseName.empty())
+			if (metaData.isMixin)
 				continue;
 
 			Map<UINT32, SPtr<Pass>, std::greater<UINT32>> passes;
@@ -1353,12 +1673,13 @@ namespace bs
 					passDesc.depthStencilState = DepthStencilState::create(passData.depthStencilDesc);
 
 				GPU_PROGRAM_DESC desc;
-				desc.entryPoint = "main";
 				desc.language = metaData.language;
 
+				bool isHLSL = desc.language == "hlsl";
 				if (!passData.vertexCode.empty())
 				{
-					desc.source = passData.commonCode + passData.vertexCode;
+					desc.entryPoint = isHLSL ? "vsmain" : "main";
+					desc.source = passData.vertexCode;
 					desc.type = GPT_VERTEX_PROGRAM;
 
 					passDesc.vertexProgram = GpuProgram::create(desc);
@@ -1366,7 +1687,8 @@ namespace bs
 
 				if (!passData.fragmentCode.empty())
 				{
-					desc.source = passData.commonCode + passData.fragmentCode;
+					desc.entryPoint = isHLSL ? "fsmain" : "main";
+					desc.source = passData.fragmentCode;
 					desc.type = GPT_FRAGMENT_PROGRAM;
 
 					passDesc.fragmentProgram = GpuProgram::create(desc);
@@ -1374,7 +1696,8 @@ namespace bs
 
 				if (!passData.geometryCode.empty())
 				{
-					desc.source = passData.commonCode + passData.geometryCode;
+					desc.entryPoint = isHLSL ? "gsmain" : "main";
+					desc.source = passData.geometryCode;
 					desc.type = GPT_GEOMETRY_PROGRAM;
 
 					passDesc.geometryProgram = GpuProgram::create(desc);
@@ -1382,7 +1705,8 @@ namespace bs
 
 				if (!passData.hullCode.empty())
 				{
-					desc.source = passData.commonCode + passData.hullCode;
+					desc.entryPoint = isHLSL ? "hsmain" : "main";
+					desc.source = passData.hullCode;
 					desc.type = GPT_HULL_PROGRAM;
 
 					passDesc.hullProgram = GpuProgram::create(desc);
@@ -1390,7 +1714,8 @@ namespace bs
 
 				if (!passData.domainCode.empty())
 				{
-					desc.source = passData.commonCode + passData.domainCode;
+					desc.entryPoint = isHLSL ? "dsmain" : "main";
+					desc.source = passData.domainCode;
 					desc.type = GPT_DOMAIN_PROGRAM;
 
 					passDesc.domainProgram = GpuProgram::create(desc);
@@ -1398,7 +1723,8 @@ namespace bs
 
 				if (!passData.computeCode.empty())
 				{
-					desc.source = passData.commonCode + passData.computeCode;
+					desc.entryPoint = isHLSL ? "csmain" : "main";
+					desc.source = passData.computeCode;
 					desc.type = GPT_COMPUTE_PROGRAM;
 
 					passDesc.computeProgram = GpuProgram::create(desc);
@@ -1453,17 +1779,5 @@ namespace bs
 			output[i] = input[i + 1];
 
 		return output;
-	}
-
-	HTexture BSLFXCompiler::getBuiltinTexture(const String& name)
-	{
-		if (StringUtil::compare(name, String("white"), false) == 0)
-			return BuiltinResources::getTexture(BuiltinTexture::White);
-		else if (StringUtil::compare(name, String("black"), false) == 0)
-			return BuiltinResources::getTexture(BuiltinTexture::Black);
-		else if (StringUtil::compare(name, String("normal"), false) == 0)
-			return BuiltinResources::getTexture(BuiltinTexture::Normal);
-
-		return HTexture();
 	}
 }
